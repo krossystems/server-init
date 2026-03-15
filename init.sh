@@ -432,8 +432,18 @@ step_harden_ssh() {
   }
 
   set_sshd_option "PasswordAuthentication"          "no"
-  set_sshd_option "ChallengeResponseAuthentication" "no"
   set_sshd_option "KbdInteractiveAuthentication"    "no"
+
+  # ChallengeResponseAuthentication was removed in OpenSSH 9.0 (Ubuntu 24.04+).
+  # Only set it on older versions; KbdInteractiveAuthentication covers both.
+  local ssh_major
+  ssh_major=$(ssh -V 2>&1 | grep -oE 'OpenSSH_[0-9]+' | grep -oE '[0-9]+' || echo "0")
+  if (( ssh_major < 9 )); then
+    set_sshd_option "ChallengeResponseAuthentication" "no"
+  else
+    # Remove the deprecated option if a previous run left it in the file
+    sed -i -E '/^\s*#?\s*ChallengeResponseAuthentication\s/d' "$sshd_config"
+  fi
   set_sshd_option "UsePAM"                          "yes"
   set_sshd_option "PubkeyAuthentication"            "yes"
   set_sshd_option "AuthorizedKeysFile"              ".ssh/authorized_keys"
@@ -453,13 +463,15 @@ step_harden_ssh() {
   fi
 
   # Validate config before restarting
-  if sshd -t -f "$sshd_config" 2>/dev/null; then
+  local validation_err
+  if validation_err=$(sshd -t -f "$sshd_config" 2>&1); then
     systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || true
     log "SSH service restarted with new configuration."
   else
-    warn "SSH config validation failed. Restoring backup..."
+    warn "SSH config validation failed:"
+    warn "  $validation_err"
     cp "$backup" "$sshd_config"
-    die "SSH hardening aborted. Original config restored."
+    warn "Backup restored — SSH hardening skipped (remaining steps continue)."
   fi
 }
 
