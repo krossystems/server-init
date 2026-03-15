@@ -2,20 +2,18 @@
 # ==============================================================================
 # status.sh — Server status and health report
 # https://github.com/krossystems/server-init
-#
-# Usage:
-#   bash status.sh          (limited output — no sudo)
-#   sudo bash status.sh     (full output — recommended)
 # ==============================================================================
 
 set -uo pipefail
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
-  GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
-  CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+  GREEN='\033[0;32m';  YELLOW='\033[1;33m'; RED='\033[0;31m'
+  CYAN='\033[0;36m';   BOLD='\033[1m';      DIM='\033[2m';    NC='\033[0m'
+  BG='\033[1;32m';     BY='\033[1;33m';     BR='\033[1;31m';  BC='\033[1;36m'
 else
   GREEN=''; YELLOW=''; RED=''; CYAN=''; BOLD=''; DIM=''; NC=''
+  BG='';    BY='';     BR='';  BC=''
 fi
 
 # ── Health tracking ───────────────────────────────────────────────────────────
@@ -24,42 +22,97 @@ h_pass() { HEALTH_PASS+=("$*"); }
 h_warn() { HEALTH_WARN+=("$*"); }
 h_fail() { HEALTH_FAIL+=("$*"); }
 
-# ── Display helpers ───────────────────────────────────────────────────────────
-section()   { echo -e "\n${CYAN}${BOLD}── $* ──────────────────────────────────${NC}"; }
-kv()        { printf "  ${BOLD}%-28s${NC}%s\n" "$1" "$2"; }
-ok()        { echo -e "  ${GREEN}✔${NC}  $*"; }
-warn_line() { echo -e "  ${YELLOW}⚠${NC}  $*"; }
-fail_line() { echo -e "  ${RED}✗${NC}  $*"; }
-dim_line()  { echo -e "  ${DIM}$*${NC}"; }
+# ── Visual primitives ─────────────────────────────────────────────────────────
+W=64  # inner width of the report
+
+# Section header
+section() {
+  local title=" $1 " tlen=$(( ${#1} + 2 )) i
+  printf "\n${BC}${BOLD}%s${NC}${DIM}" "$title"
+  for (( i=0; i < W - tlen; i++ )); do printf '─'; done
+  printf "${NC}\n"
+}
+
+# Progress bar — bar PCT [WIDTH=22]
+bar() {
+  local pct=$1 w=${2:-22} i
+  (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
+  local f=$(( pct * w / 100 )) e=$(( w - pct * w / 100 ))
+  local c; (( pct >= 90 )) && c="$BR" || { (( pct >= 75 )) && c="$BY" || c="$BG"; }
+  printf "${c}"; for (( i=0; i<f; i++ )); do printf '█'; done
+  printf "${NC}${DIM}"; for (( i=0; i<e; i++ )); do printf '░'; done
+  printf "${NC}"
+}
+
+# pct_color PCT — inline colored percentage
+pct_color() {
+  local pct=$1 c
+  (( pct >= 90 )) && c="$BR" || { (( pct >= 75 )) && c="$BY" || c="$BG"; }
+  printf "${c}%3d%%${NC}" "$pct"
+}
+
+# Metric row: metric "LABEL" PCT "detail"
+metric() {
+  local label="$1" pct="$2" detail="$3"
+  printf "  ${BOLD}%-7s${NC} "; bar "$pct"; printf "  "; pct_color "$pct"
+  printf "  ${DIM}%s${NC}\n" "$detail"
+}
+
+# kv — single-column key/value
+kv()  { printf "  ${DIM}%-22s${NC}%s\n" "$1" "$2"; }
+
+# kv2 — two-column key/value
+kv2() { printf "  ${DIM}%-14s${NC}%-22s  ${DIM}%-14s${NC}%s\n" "$1" "$2" "$3" "$4"; }
+
+# Status dot for services
+dot() {
+  case "$1" in
+    active)   printf "${BG}●${NC}" ;;
+    inactive) printf "${YELLOW}●${NC}" ;;
+    failed)   printf "${BR}●${NC}" ;;
+    *)        printf "${DIM}●${NC}" ;;
+  esac
+}
+
+# Check mark: chk VAL GOOD_VAL — green ✔ or red ✗
+chk() { [[ "$1" == "$2" ]] && printf "${BG}✔${NC}" || printf "${BR}✗${NC}"; }
+
+# Colorize value: cv VAL [GOOD] [BAD]
+cv() {
+  local v="$1" g="${2:-}" b="${3:-}"
+  if   [[ -n "$g" && "$v" == "$g" ]]; then printf "${BG}%s${NC}" "$v"
+  elif [[ -n "$b" && "$v" == "$b" ]]; then printf "${BR}%s${NC}" "$v"
+  else printf "%s" "$v"; fi
+}
+
+# Human-readable from KB
+human_kb() {
+  awk -v k="$1" 'BEGIN{
+    if(k>=1048576)      printf "%.1f GB", k/1048576
+    else if(k>=1024)    printf "%.1f MB", k/1024
+    else                printf "%d KB", k
+  }'
+}
 
 # ── Privilege check ───────────────────────────────────────────────────────────
 HAS_SUDO=false
 if [[ "$EUID" -eq 0 ]] || sudo -n true 2>/dev/null; then HAS_SUDO=true; fi
 
-# Wrapper: run with sudo if available; silently return 1 otherwise
 esudo() {
-  if [[ "$EUID" -eq 0 ]]; then
-    "$@" 2>/dev/null
-  elif [[ "$HAS_SUDO" == "true" ]]; then
-    sudo -n "$@" 2>/dev/null
-  else
-    return 1
-  fi
+  if   [[ "$EUID" -eq 0 ]];         then "$@" 2>/dev/null
+  elif [[ "$HAS_SUDO" == "true" ]]; then sudo -n "$@" 2>/dev/null
+  else return 1; fi
 }
 
 # ── OS detection ──────────────────────────────────────────────────────────────
 detect_os() {
-  if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    OS_ID="${ID:-unknown}"; OS_ID_LIKE="${ID_LIKE:-}"; OS_PRETTY="${PRETTY_NAME:-$ID}"
-  else
-    OS_ID="unknown"; OS_ID_LIKE=""; OS_PRETTY="Unknown"
-  fi
-  case "$OS_ID" in
-    ubuntu|debian|linuxmint|pop) PKG_MANAGER="apt" ;;
+  [[ -f /etc/os-release ]] && . /etc/os-release || true
+  OS_ID="${ID:-unknown}"; OS_ID_LIKE="${ID_LIKE:-}"; OS_PRETTY="${PRETTY_NAME:-${ID:-unknown}}"
+  case "${OS_ID:-}" in
+    ubuntu|debian|linuxmint|pop)          PKG_MANAGER="apt" ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       PKG_MANAGER=$(command -v dnf &>/dev/null && echo "dnf" || echo "yum") ;;
-    arch|manjaro) PKG_MANAGER="pacman" ;;
+    arch|manjaro)                         PKG_MANAGER="pacman" ;;
     *)
       if   echo "$OS_ID_LIKE" | grep -qiE "debian|ubuntu"; then PKG_MANAGER="apt"
       elif echo "$OS_ID_LIKE" | grep -qiE "rhel|centos|fedora"; then PKG_MANAGER="dnf"
@@ -67,26 +120,30 @@ detect_os() {
   esac
 }
 
-# ── Uptime human-readable ─────────────────────────────────────────────────────
 human_uptime() {
   local s; s=$(awk '{print int($1)}' /proc/uptime)
   local d=$(( s/86400 )) h=$(( s%86400/3600 )) m=$(( s%3600/60 ))
-  local r=""; (( d>0 )) && r+="${d}d "; (( h>0 )) && r+="${h}h "; r+="${m}m"
-  echo "$r"
+  local r=""; (( d>0 )) && r+="${d}d "; (( h>0 )) && r+="${h}h "; r+="${m}m"; echo "$r"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Header
+# ══════════════════════════════════════════════════════════════════════════════
 print_header() {
   local host; host=$(hostname)
+  local dt; dt=$(date '+%Y-%m-%d %H:%M %Z')
+  local i
   echo
-  echo -e "${CYAN}${BOLD}════════════════════════════════════════════════════════${NC}"
-  echo -e "${CYAN}${BOLD}  SERVER STATUS REPORT${NC}"
-  printf "  host: ${BOLD}%-20s${NC}  date: %s\n" "$host" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
-  if [[ "$HAS_SUDO" != "true" ]]; then
-    echo -e "\n  ${YELLOW}⚠  Running without sudo — some checks will be limited.${NC}"
-    echo -e "  ${YELLOW}   For full output: sudo bash status.sh${NC}"
-  fi
-  echo -e "${CYAN}${BOLD}════════════════════════════════════════════════════════${NC}"
+  printf "${BC}${BOLD}┌"; for ((i=0;i<W+2;i++)); do printf '─'; done; printf "┐${NC}\n"
+  printf "${BC}${BOLD}│${NC}  ${BOLD}SERVER STATUS REPORT${NC}"
+  local pad=$(( W + 2 - 22 - ${#host} - ${#dt} - 4 ))
+  printf "  ${CYAN}${BOLD}%s${NC}" "$host"
+  printf "%*s" "$pad" ""
+  printf "${DIM}%s${NC}" "$dt"
+  printf "  ${BC}${BOLD}│${NC}\n"
+  printf "${BC}${BOLD}└"; for ((i=0;i<W+2;i++)); do printf '─'; done; printf "┘${NC}\n"
+  [[ "$HAS_SUDO" != "true" ]] && \
+    printf "\n  ${YELLOW}⚠  No sudo — some checks limited. Re-run: sudo bash status.sh${NC}\n"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -95,31 +152,29 @@ print_header() {
 check_system() {
   section "SYSTEM"
 
-  local tz ntp virt
+  local tz ntp virt boot_time uptime_str
   tz=$(timedatectl show --property=Timezone --value 2>/dev/null \
        || cat /etc/timezone 2>/dev/null || date +%Z)
-  ntp=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "unknown")
-  virt=$(systemd-detect-virt 2>/dev/null || echo "unknown")
+  ntp=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "?")
+  virt=$(systemd-detect-virt 2>/dev/null || echo "?")
+  boot_time=$(uptime -s 2>/dev/null || who -b 2>/dev/null | awk '{print $3,$4}' || echo "?")
+  uptime_str=$(human_uptime)
 
-  kv "Hostname:"     "$(hostname)"
-  kv "OS:"           "$OS_PRETTY"
-  kv "Kernel:"       "$(uname -r) ($(uname -m))"
-  kv "Uptime:"       "$(human_uptime)"
-  kv "Boot time:"    "$(uptime -s 2>/dev/null || who -b 2>/dev/null | awk '{print $3,$4}' || echo unknown)"
-  kv "Timezone:"     "$tz"
-  kv "NTP sync:"     "$ntp"
-  kv "Virt type:"    "$virt"
+  local ntp_str
+  [[ "$ntp" == "yes" ]] && ntp_str="${BG}✔ NTP${NC}" || ntp_str="${BY}✗ NTP${NC}"
+
+  kv2 "Hostname"  "$(hostname)"         "OS"       "$OS_PRETTY"
+  kv2 "Kernel"    "$(uname -r)"         "Arch"     "$(uname -m)"
+  kv2 "Uptime"    "$uptime_str"         "Boot"     "$boot_time"
+  kv2 "Timezone"  "$tz"                 "NTP"      "$(printf "$ntp_str")"
+  kv  "Virt"      "$virt"
 
   local uptime_s; uptime_s=$(awk '{print int($1)}' /proc/uptime)
   if (( uptime_s < 300 )); then
-    warn_line "Rebooted less than 5 minutes ago"
-    h_warn "System rebooted < 5 minutes ago (unexpected?)"
+    printf "  ${BY}⚠  Rebooted < 5 min ago${NC}\n"; h_warn "Rebooted < 5 minutes ago"
   fi
-  if [[ "$ntp" == "no" ]]; then
-    warn_line "NTP is not synchronized"; h_warn "NTP not synchronized"
-  elif [[ "$ntp" == "yes" ]]; then
-    h_pass "NTP synchronized"
-  fi
+  [[ "$ntp" == "no"  ]] && { printf "  ${BY}⚠  NTP not synced${NC}\n"; h_warn "NTP not synchronized"; }
+  [[ "$ntp" == "yes" ]] && h_pass "NTP synchronized"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -133,41 +188,43 @@ check_hardware() {
   cpu_threads=$(grep -c "^processor" /proc/cpuinfo)
   cpu_cores=$(grep "^cpu cores" /proc/cpuinfo | tail -1 | awk '{print $NF}' 2>/dev/null || echo "$cpu_threads")
 
-  kv "CPU:" "$cpu_model"
-  kv "Cores / threads:" "${cpu_cores} cores / ${cpu_threads} threads"
+  printf "  ${DIM}CPU${NC}  %s  ${DIM}·${NC}  %s cores / %s threads\n" \
+    "$cpu_model" "$cpu_cores" "$cpu_threads"
+  echo
 
   # RAM
-  local ram_total ram_avail ram_used ram_pct
-  ram_total=$(awk '/^MemTotal/{print $2}'     /proc/meminfo)
-  ram_avail=$(awk '/^MemAvailable/{print $2}' /proc/meminfo)
-  ram_used=$(( ram_total - ram_avail ))
-  ram_pct=$(( ram_used * 100 / ram_total ))
-
-  local ram_total_mb=$(( ram_total / 1024 ))
-  local ram_used_mb=$(( ram_used / 1024 ))
-  kv "RAM:" "${ram_total_mb} MB total  |  ${ram_used_mb} MB used  (${ram_pct}%)"
-
-  if   (( ram_pct >= 90 )); then fail_line "RAM critical at ${ram_pct}%"; h_fail "RAM usage critical (${ram_pct}%)"
-  elif (( ram_pct >= 75 )); then warn_line "RAM high at ${ram_pct}%";    h_warn "RAM usage high (${ram_pct}%)"
-  else                           h_pass "RAM usage normal (${ram_pct}%)"
-  fi
+  local rt ra ru rp
+  rt=$(awk '/^MemTotal/{print $2}'     /proc/meminfo)
+  ra=$(awk '/^MemAvailable/{print $2}' /proc/meminfo)
+  ru=$(( rt - ra )); rp=$(( ru * 100 / rt ))
+  metric "RAM"  "$rp"  "$(human_kb $ru) used / $(human_kb $rt) total"
+  (( rp >= 90 )) && { printf "  ${BR}✗  RAM critical (${rp}%%)${NC}\n"; h_fail "RAM critical (${rp}%)"; } \
+  || { (( rp >= 75 )) && { printf "  ${BY}⚠  RAM high (${rp}%%)${NC}\n"; h_warn "RAM high (${rp}%)"; } \
+  || h_pass "RAM normal (${rp}%)"; }
 
   # Swap
-  local swap_total swap_free swap_used swap_pct
-  swap_total=$(awk '/^SwapTotal/{print $2}' /proc/meminfo)
-  swap_free=$(awk '/^SwapFree/{print $2}'   /proc/meminfo)
-  swap_used=$(( swap_total - swap_free ))
-
-  if (( swap_total == 0 )); then
-    kv "Swap:" "none"
-    if (( ram_total < 4194304 )); then
-      warn_line "No swap and RAM < 4 GB"; h_warn "No swap configured (RAM < 4 GB)"
-    fi
+  local st sf su sp
+  st=$(awk '/^SwapTotal/{print $2}' /proc/meminfo)
+  sf=$(awk '/^SwapFree/{print $2}'  /proc/meminfo)
+  su=$(( st - sf ))
+  if (( st == 0 )); then
+    printf "  ${BOLD}%-7s${NC} ${DIM}(none configured)${NC}\n" "Swap"
+    (( rt < 4194304 )) && { printf "  ${BY}⚠  No swap, RAM < 4 GB${NC}\n"; h_warn "No swap (RAM < 4 GB)"; }
   else
-    swap_pct=$(( swap_used * 100 / swap_total ))
-    kv "Swap:" "$(( swap_total/1024 )) MB total  |  $(( swap_used/1024 )) MB used  (${swap_pct}%)"
-    if (( swap_pct >= 50 )); then warn_line "Swap usage high (${swap_pct}%)"; h_warn "Swap usage high (${swap_pct}%)"; fi
+    sp=$(( su * 100 / st ))
+    metric "Swap" "$sp" "$(human_kb $su) used / $(human_kb $st) total"
+    (( sp >= 50 )) && { h_warn "Swap high (${sp}%)"; }
   fi
+
+  # Load
+  local load_1 load_5 load_15 cpu_count lp
+  read -r load_1 load_5 load_15 _ < /proc/loadavg
+  cpu_count=$(nproc)
+  lp=$(awk "BEGIN{printf \"%.0f\", $load_1/$cpu_count*100}")
+  metric "Load" "$lp" "${load_1} / ${load_5} / ${load_15}  (${cpu_count} CPUs,  1m / 5m / 15m)"
+  (( lp >= 200 )) && { printf "  ${BR}✗  Load critical${NC}\n"; h_fail "Load critical: ${load_1} (${lp}%)"; } \
+  || { (( lp >= 100 )) && { printf "  ${BY}⚠  Load high${NC}\n"; h_warn "Load high: ${load_1} (${lp}%)"; } \
+  || h_pass "Load normal: ${load_1} (${lp}%)"; }
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -177,34 +234,46 @@ check_storage() {
   section "STORAGE"
 
   echo
-  df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null \
-    | awk '{printf "  %s\n", $0}'
+  # Parse df -hT and df -T together using awk
+  # Display: name bar pct used/total type
+  local fs_data
+  fs_data=$(df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
+  local fs_data_num
+  fs_data_num=$(df -T  -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
 
-  # Disk usage health checks — df -T columns: Filesystem Type 1K-blocks Used Available Use% Mounted
-  while read -r _ _ _ _ _ pct_raw mount; do
-    local pct="${pct_raw//%/}"
+  # Build a display for each filesystem
+  while IFS= read -r line; do
+    local fs type size used avail pct_str mount
+    read -r fs type size used avail pct_str mount <<< "$line"
+    local pct="${pct_str//%/}"
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
-    if   (( pct >= 90 )); then fail_line "Disk $mount at ${pct}%"; h_fail "Disk $mount is ${pct}% full"
-    elif (( pct >= 80 )); then warn_line "Disk $mount at ${pct}%"; h_warn "Disk $mount is ${pct}% full"
-    fi
-  done < <(df -T -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
 
-  # Inode health checks — df -i columns: Filesystem Type Inodes IUsed IFree IUse% Mounted
-  while read -r _ _ _ _ _ pct_raw mount; do
-    local pct="${pct_raw//%/}"
-    [[ "$pct" =~ ^[0-9]+$ ]] || continue
-    if   (( pct >= 90 )); then fail_line "Inodes $mount at ${pct}%"; h_fail "Inode exhaustion on $mount (${pct}%)"
-    elif (( pct >= 80 )); then warn_line "Inodes $mount at ${pct}%"; h_warn "High inode usage on $mount (${pct}%)"
-    fi
+    # Determine color
+    local bar_str; bar_str=$(bar "$pct")
+    local pct_str_colored; pct_str_colored=$(pct_color "$pct")
+
+    printf "  ${BOLD}%-20s${NC} %s  %s  ${DIM}%s / %s  (%s)${NC}\n" \
+      "$mount" "$bar_str" "$pct_str_colored" "$used" "$size" "$type"
+
+    (( pct >= 90 )) && { printf "  ${BR}✗  Disk %s at %d%% — CRITICAL${NC}\n" "$mount" "$pct"
+                         h_fail "Disk $mount is ${pct}% full"; } \
+    || { (( pct >= 80 )) && { printf "  ${BY}⚠  Disk %s at %d%%${NC}\n" "$mount" "$pct"
+                               h_warn "Disk $mount is ${pct}% full"; }; }
+  done <<< "$fs_data"
+
+  # Inode checks (silent — only report problems)
+  while read -r _ _ _ _ _ ipct_raw imount; do
+    local ipct="${ipct_raw//%/}"
+    [[ "$ipct" =~ ^[0-9]+$ ]] || continue
+    (( ipct >= 90 )) && { printf "  ${BR}✗  Inodes %s at %d%%${NC}\n" "$imount" "$ipct"
+                          h_fail "Inode exhaustion on $imount (${ipct}%)"; } \
+    || { (( ipct >= 80 )) && { printf "  ${BY}⚠  Inodes %s at %d%%${NC}\n" "$imount" "$ipct"
+                                h_warn "High inode usage on $imount (${ipct}%)"; }; }
   done < <(df -iT -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
 
-  # Swap devices
-  local swap_info; swap_info=$(swapon --show=NAME,TYPE,SIZE,USED,PRIO 2>/dev/null || true)
-  if [[ -n "$swap_info" ]]; then
-    echo
-    dim_line "Swap:"
-    echo "$swap_info" | awk '{printf "  %s\n", $0}'
-  fi
+  # Swap
+  local swap_info; swap_info=$(swapon --show=NAME,TYPE,SIZE,USED 2>/dev/null | tail -n +2 || true)
+  [[ -n "$swap_info" ]] && printf "\n  ${DIM}Swap:${NC}  %s\n" "$swap_info"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -213,56 +282,46 @@ check_storage() {
 check_network() {
   section "NETWORK"
 
-  # Public IP
   local pub4
   pub4=$(curl -fsSL --max-time 4 https://api.ipify.org 2>/dev/null \
       || curl -4 -fsSL --max-time 4 https://ifconfig.me 2>/dev/null \
       || echo "(unavailable)")
-  kv "Public IPv4:" "$pub4"
 
-  if [[ "$pub4" == "(unavailable)" ]]; then
-    fail_line "Cannot reach internet"; h_fail "No internet connectivity"
-  else
-    h_pass "Internet connectivity OK ($pub4)"
-  fi
-
-  # Interfaces
-  echo
-  dim_line "Interfaces:"
-  ip -brief addr show 2>/dev/null | awk '{printf "  %-14s %-14s %s\n",$1,$2,$3}' \
-    || ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | sed 's/^/  /'
-
-  # Gateway and DNS
   local gw dns dns_test
-  gw=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}' || echo "unknown")
+  gw=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}' || echo "?")
   dns=$(grep "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ' | xargs || echo "none")
-  kv "Default gateway:" "$gw"
-  kv "DNS servers:" "$dns"
-
-  # DNS test
   dns_test=$(dig +short +time=3 google.com A 2>/dev/null | head -1 \
     || host -W3 google.com 2>/dev/null | awk '/has address/{print $4; exit}' \
     || getent hosts google.com 2>/dev/null | awk '{print $1; exit}' || echo "")
-  if [[ -n "$dns_test" ]]; then
-    kv "DNS test:" "OK (google.com → $dns_test)"; h_pass "DNS resolution working"
-  else
-    kv "DNS test:" "FAILED"; fail_line "DNS resolution failed"; h_fail "DNS resolution failed"
-  fi
 
-  # Listening ports
+  local pub4_str dns_str
+  [[ "$pub4" == "(unavailable)" ]] \
+    && { pub4_str="${BR}(unavailable)${NC}"; h_fail "No internet"; } \
+    || { pub4_str="${BG}${pub4}${NC}"; h_pass "Internet OK ($pub4)"; }
+  [[ -n "$dns_test" ]] \
+    && { dns_str="${BG}✔${NC} ${dns_test}"; h_pass "DNS OK"; } \
+    || { dns_str="${BR}✗ FAILED${NC}"; h_fail "DNS resolution failed"; }
+
+  kv2 "Public IPv4"  "$(printf "$pub4_str")"  "Gateway"  "$gw"
+  kv2 "DNS servers"  "$dns"                   "Resolve"  "$(printf "$dns_str")"
+
   echo
-  dim_line "Listening ports (TCP/UDP):"
+  printf "  ${DIM}Interfaces:${NC}\n"
+  ip -brief addr show 2>/dev/null | awk '{
+    st = ($2=="UP") ? "\033[1;32m●\033[0m" : "\033[2m○\033[0m"
+    printf "  %s  \033[1m%-12s\033[0m  \033[2m%-10s\033[0m  %s\n", st, $1, $2, $3
+  }'
+
+  echo
+  printf "  ${DIM}Listening ports:${NC}\n"
   if [[ "$HAS_SUDO" == "true" ]]; then
     esudo ss -tlnpu 2>/dev/null \
       | awk 'NR>1{
-          split($5,a,":");port=a[length(a)];
-          match($7,/\(\("([^"]+)/,m);proc=m[1]?m[1]:"?"
-          printf "  %-6s %-25s %s\n",$1,$5,proc
-        }' \
-      || esudo ss -tlnp | awk 'NR>1{printf "  %-6s %s\n",$1,$5}'
+          match($7,/\(\("([^"]+)/,m); proc=m[1]?m[1]:"?"
+          printf "  \033[2m%-6s\033[0m  %-26s \033[2m%s\033[0m\n",$1,$5,proc
+        }' || true
   else
-    ss -tlnp 2>/dev/null | awk 'NR>1{printf "  %-6s %s\n",$1,$5}'
-    dim_line "(sudo needed for process names)"
+    ss -tlnp 2>/dev/null | awk 'NR>1{printf "  \033[2m%-6s\033[0m  %s\n",$1,$5}'
   fi
 }
 
@@ -272,16 +331,15 @@ check_network() {
 check_security() {
   section "SECURITY"
 
-  # 5a — SSH config via sshd -T (effective merged config)
-  echo -e "\n  ${BOLD}SSH Configuration${NC}"
+  # 5a — SSH config
+  printf "\n  ${BOLD}SSH Configuration${NC}\n"
 
   local sshd_t=""
   sshd_t=$(esudo sshd -T 2>/dev/null || true)
 
   get_ssh() {
-    local key="$1" default="${2:-?}"
-    local val=""
-    [[ -n "$sshd_t" ]] && val=$(echo "$sshd_t" | awk -v k="${key,,}" 'tolower($1)==k{print $2; exit}')
+    local key="$1" default="${2:-?}" val=""
+    [[ -n "$sshd_t" ]] && val=$(echo "$sshd_t" | awk -v k="${key,,}" 'tolower($1)==k{print $2;exit}')
     [[ -z "$val" ]] && val=$(grep -iE "^\s*${key}\s" /etc/ssh/sshd_config 2>/dev/null \
                               | tail -1 | awk '{print $2}')
     echo "${val:-$default}"
@@ -297,108 +355,113 @@ check_security() {
   x11=$(get_ssh       "x11forwarding"         "?")
   port=$(get_ssh      "port"                  "22")
 
-  # Colored value printer: green if matches expected, red if matches bad, else default
-  cv() {
-    local val="$1" good="${2:-}" bad="${3:-}"
-    if   [[ -n "$good" && "$val" == "$good" ]]; then echo -e "${GREEN}${val}${NC}"
-    elif [[ -n "$bad"  && "$val" == "$bad"  ]]; then echo -e "${RED}${val}${NC}"
-    else echo "$val"; fi
-  }
+  # Two-column checklist
+  printf "  $(chk "$pw_auth"  "no")  ${DIM}PasswordAuth${NC}    %-8s  " "$(cv "$pw_auth" "no" "yes")"
+  printf "  $(chk "$empty_pw" "no")  ${DIM}EmptyPwd${NC}      %s\n"        "$(cv "$empty_pw" "no" "yes")"
+  printf "  $(chk "$pubkey"  "yes")  ${DIM}PubkeyAuth${NC}     %-8s  " "$(cv "$pubkey" "yes" "no")"
+  printf "  $(chk "$x11"      "no")  ${DIM}X11Forward${NC}    %s\n"        "$(cv "$x11" "no" "yes")"
+  printf "  ${DIM}◦  PermitRootLogin${NC}  %-12s  " "$root_login"
+  printf "  ${DIM}◦  MaxAuthTries${NC}    %s   ${DIM}Port${NC} %s\n" "$max_tries" "$port"
 
-  printf "  ${BOLD}%-30s${NC}%s\n" "PasswordAuthentication:" "$(cv "$pw_auth" "no" "yes")"
-  printf "  ${BOLD}%-30s${NC}%s\n" "PubkeyAuthentication:"   "$(cv "$pubkey" "yes" "no")"
-  printf "  ${BOLD}%-30s${NC}%s\n" "PermitRootLogin:"        "$root_login"
-  printf "  ${BOLD}%-30s${NC}%s\n" "PermitEmptyPasswords:"   "$(cv "$empty_pw" "no" "yes")"
-  printf "  ${BOLD}%-30s${NC}%s\n" "MaxAuthTries:"           "$max_tries"
-  printf "  ${BOLD}%-30s${NC}%s\n" "LoginGraceTime:"         "$grace"
-  printf "  ${BOLD}%-30s${NC}%s\n" "X11Forwarding:"          "$(cv "$x11" "no" "yes")"
-  printf "  ${BOLD}%-30s${NC}%s\n" "Port:"                   "$port"
-
-  [[ "$pw_auth"   == "yes" ]] && { fail_line "Password auth enabled!"; h_fail "SSH: PasswordAuthentication=yes"; } \
-                               || { [[ "$pw_auth" == "no" ]] && h_pass "SSH: key-only auth"; }
-  [[ "$empty_pw"  == "yes" ]] && { fail_line "Empty passwords allowed!"; h_fail "SSH: PermitEmptyPasswords=yes"; }
-  [[ "$x11"       == "yes" ]] && { warn_line "X11 forwarding enabled"; h_warn "SSH: X11Forwarding=yes"; }
-  [[ "$max_tries" =~ ^[0-9]+$ && "$max_tries" -gt 4 ]] \
-    && { warn_line "MaxAuthTries=$max_tries (recommend ≤4)"; h_warn "SSH: MaxAuthTries=$max_tries"; }
+  [[ "$pw_auth" == "yes" ]] && { printf "  ${BR}✗  Password auth enabled!${NC}\n"; h_fail "SSH: PasswordAuthentication=yes"; } \
+                             || { [[ "$pw_auth" == "no" ]] && h_pass "SSH: key-only auth"; }
+  [[ "$empty_pw" == "yes" ]] && { printf "  ${BR}✗  Empty passwords allowed!${NC}\n"; h_fail "SSH: PermitEmptyPasswords=yes"; }
 
   # 5b — Authorized keys
-  echo -e "\n  ${BOLD}Authorized Keys${NC}"
-  local current_user_home
-  current_user_home=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6 2>/dev/null || echo "$HOME")
-  local auth_keys="${current_user_home}/.ssh/authorized_keys"
+  printf "\n  ${BOLD}Authorized Keys${NC}\n"
+  local user_home
+  user_home=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6 2>/dev/null || echo "$HOME")
+  local auth_keys="${user_home}/.ssh/authorized_keys"
 
   if [[ -f "$auth_keys" && -s "$auth_keys" ]]; then
-    local key_count
-    key_count=$(grep -cE "^(ssh-|ecdsa-|sk-)" "$auth_keys" 2>/dev/null || wc -l < "$auth_keys")
-    kv "Keys (${SUDO_USER:-$USER}):" "$key_count key(s)"
-    ssh-keygen -lf "$auth_keys" 2>/dev/null | awk '{printf "  %s\n", $0}' || true
-    h_pass "Authorized keys present ($key_count)"
+    local kc; kc=$(grep -cE "^(ssh-|ecdsa-|sk-)" "$auth_keys" 2>/dev/null \
+                   || wc -l < "$auth_keys")
+    printf "  ${BG}✔${NC}  ${DIM}%s${NC}  %d key(s)\n" "${SUDO_USER:-$USER}" "$kc"
+    ssh-keygen -lf "$auth_keys" 2>/dev/null \
+      | awk '{printf "     \033[2m%s  %s  %s\033[0m\n", $1,$2,$4}' || true
+    h_pass "Authorized keys OK ($kc)"
   else
-    warn_line "No authorized_keys for ${SUDO_USER:-$USER}!"; h_warn "No authorized_keys found"
+    printf "  ${BR}✗  No authorized_keys for %s${NC}\n" "${SUDO_USER:-$USER}"
+    h_warn "No authorized_keys"
   fi
-
-  # Root authorized keys (informational)
   if [[ "$HAS_SUDO" == "true" ]]; then
-    local root_keys_count
-    root_keys_count=$(esudo wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo 0)
-    (( root_keys_count > 0 )) && kv "Keys (root):" "$root_keys_count key(s)"
+    local rk; rk=$(esudo wc -l < /root/.ssh/authorized_keys 2>/dev/null | tr -d ' ' || echo 0)
+    (( rk > 0 )) && printf "  ${DIM}◦  root: %d key(s)${NC}\n" "$rk"
   fi
 
   # 5c — fail2ban
-  echo -e "\n  ${BOLD}fail2ban${NC}"
+  printf "\n  ${BOLD}fail2ban${NC}\n"
   local f2b_active
-  f2b_active=$(esudo systemctl is-active fail2ban 2>/dev/null || echo "inactive")
-  kv "Status:" "$f2b_active"
+  f2b_active=$(esudo systemctl is-active fail2ban 2>/dev/null || true)
+  [[ -z "$f2b_active" ]] && f2b_active="inactive"
 
+  printf "  $(dot "$f2b_active")  fail2ban  "
   if [[ "$f2b_active" == "active" ]]; then
+    printf "${BG}active${NC}"
     h_pass "fail2ban active"
-    local jail_output
-    jail_output=$(esudo fail2ban-client status sshd 2>/dev/null || true)
-    if [[ -n "$jail_output" ]]; then
-      local currently_banned total_banned
-      currently_banned=$(echo "$jail_output" | grep "Banned IP list:" | sed 's/.*Banned IP list://' | tr -s ' ' '\n' | grep -cE "[0-9]" || echo 0)
-      total_banned=$(echo "$jail_output" | awk '/Total banned:/{print $NF}')
-      kv "SSH jail:" "currently banned: ${currently_banned}  |  total bans: ${total_banned:-?}"
-      (( currently_banned > 0 )) && { warn_line "Active banned IPs: $currently_banned"; h_warn "fail2ban: $currently_banned IPs currently banned"; }
+    local jail; jail=$(esudo fail2ban-client status sshd 2>/dev/null || true)
+    if [[ -n "$jail" ]]; then
+      local now total
+      now=$(echo "$jail" | grep "Banned IP list:" | sed 's/.*Banned IP list://' \
+            | tr -s ' ' '\n' | grep -cE "[0-9]" || echo 0)
+      total=$(echo "$jail" | awk '/Total banned:/{print $NF}')
+      printf "   ${DIM}Banned now:${NC} ${BY}%s${NC}   ${DIM}Total bans:${NC} %s\n" "$now" "${total:-?}"
+      (( now > 0 )) && { printf "  ${BY}⚠  %s IPs currently banned${NC}\n" "$now"
+                         h_warn "fail2ban: $now IPs banned"; }
     else
-      warn_line "sshd jail not found"; h_warn "fail2ban: sshd jail not configured"
+      printf "\n  ${BY}⚠  sshd jail not found${NC}\n"; h_warn "fail2ban sshd jail missing"
     fi
   else
-    fail_line "fail2ban is NOT running"; h_fail "fail2ban not active"
+    printf "${BR}NOT running${NC}\n"
+    h_fail "fail2ban not active"
   fi
 
-  # 5d — Recent auth events
-  echo -e "\n  ${BOLD}Authentication Events (last 24h)${NC}"
-  local failed_count=0
+  # 5d — Auth events
+  printf "\n  ${BOLD}Auth Events  ${DIM}(last 24h)${NC}\n"
+  local failed=0
   if [[ "$HAS_SUDO" == "true" ]]; then
-    failed_count=$(
+    failed=$(
       esudo journalctl -u ssh -u sshd --since "24 hours ago" 2>/dev/null \
-        | grep -cE "Failed password|Invalid user|authentication failure" \
+        | grep -E "Failed password|Invalid user|authentication failure" | wc -l \
       || esudo grep -cE "Failed|Invalid|authentication failure" /var/log/auth.log 2>/dev/null \
-      || esudo grep -cE "Failed|Invalid" /var/log/secure 2>/dev/null \
-      || echo 0
+      || true
     )
+    failed=${failed:-0}
   fi
-  kv "Failed SSH attempts:" "${failed_count} (last 24h)"
 
-  if   (( failed_count > 500 )); then fail_line "Very high failed attempts: $failed_count (active brute force?)"; h_fail "SSH: $failed_count failed attempts in 24h"
-  elif (( failed_count > 100 )); then warn_line "Elevated failed attempts: $failed_count"; h_warn "SSH: $failed_count failed attempts in 24h"
-  else                                h_pass "Auth attempts normal ($failed_count failed in 24h)"
+  # Visual attack bar (max scale = 5000)
+  local scale=5000
+  local attack_pct=$(( failed * 100 / scale ))
+  (( attack_pct > 100 )) && attack_pct=100
+  local attack_color
+  (( failed > 500 )) && attack_color="$BR" || { (( failed > 100 )) && attack_color="$BY" || attack_color="$BG"; }
+
+  printf "  %s  ${DIM}Failed attempts:${NC}  ${attack_color}%s${NC}\n" \
+    "$(bar "$attack_pct" 22)" "$failed"
+
+  if   (( failed > 500 )); then
+    printf "  ${BR}✗  High volume — brute force attack likely${NC}\n"
+    h_fail "SSH: $failed failed attempts in 24h"
+  elif (( failed > 100 )); then
+    printf "  ${BY}⚠  Elevated attack activity${NC}\n"
+    h_warn "SSH: $failed failed attempts in 24h"
+  else
+    h_pass "Auth attempts normal ($failed in 24h)"
   fi
 
   # Top attacking IPs
-  if [[ "$HAS_SUDO" == "true" && "$failed_count" -gt 5 ]]; then
-    dim_line "Top source IPs (failed auth):"
+  if [[ "$HAS_SUDO" == "true" && "$failed" -gt 5 ]]; then
+    printf "  ${DIM}Top source IPs:${NC}\n"
     esudo journalctl -u ssh -u sshd --since "24 hours ago" 2>/dev/null \
       | grep -oE "from [0-9]{1,3}(\.[0-9]{1,3}){3}" | awk '{print $2}' \
       | sort | uniq -c | sort -rn | head -5 \
-      | awk '{printf "  %6d × %s\n", $1, $2}' || true
+      | awk '{printf "     \033[2m%6d ×\033[0m  %s\n",$1,$2}' || true
   fi
 
   # Last logins
-  echo
-  dim_line "Last 5 logins:"
-  last -n 5 -w 2>/dev/null | head -5 | awk '{printf "  %s\n", $0}' || dim_line "(unavailable)"
+  printf "\n  ${DIM}Last logins:${NC}\n"
+  last -n 5 -w 2>/dev/null | head -5 \
+    | awk '{printf "  \033[2m%s\033[0m\n",$0}' || printf "  ${DIM}(unavailable)${NC}\n"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -407,67 +470,59 @@ check_security() {
 check_services() {
   section "SERVICES"
 
-  # Print a service row; returns 0 if active
   svc_row() {
     local unit="$1" label="${2:-$1}"
     local status
     status=$(systemctl is-active "$unit" 2>/dev/null || true)
     [[ -z "$status" ]] && status="not-found"
-    local color
+    printf "  $(dot "$status")  ${BOLD}%-30s${NC}" "$label"
     case "$status" in
-      active)   color="$GREEN" ;;
-      inactive) color="$YELLOW" ;;
-      *)        color="$RED" ;;
+      active)   printf "${BG}active${NC}\n" ;;
+      inactive) printf "${YELLOW}inactive${NC}\n" ;;
+      failed)   printf "${BR}failed${NC}\n" ;;
+      *)        printf "${DIM}not found${NC}\n" ;;
     esac
-    printf "  ${BOLD}%-32s${NC}${color}%s${NC}\n" "$label" "$status"
     [[ "$status" == "active" ]]
   }
 
-  # sshd (name differs by distro)
+  echo
+  # SSH: try sshd first, then ssh
   local sshd_up=false
-  svc_row "sshd" "sshd" && sshd_up=true || svc_row "ssh" "sshd (ssh)" && sshd_up=true || true
-  $sshd_up && h_pass "sshd running" || h_fail "sshd is NOT running"
+  if svc_row "sshd" "sshd"; then sshd_up=true
+  elif svc_row "ssh" "ssh (sshd)"; then sshd_up=true; fi
+  $sshd_up && h_pass "sshd running" || h_fail "sshd NOT running"
 
-  svc_row "fail2ban"  "fail2ban"  || true   # already tracked in §5
+  svc_row "fail2ban" "fail2ban" || true
 
   case "$PKG_MANAGER" in
     apt)
-      if svc_row "unattended-upgrades" "unattended-upgrades"; then
-        h_pass "Automatic security updates active"
-      else
-        warn_line "unattended-upgrades not running"; h_warn "Auto security updates not active"
-      fi ;;
+      svc_row "unattended-upgrades" "unattended-upgrades" \
+        && h_pass "Auto security updates active" \
+        || { printf "  ${BY}⚠  auto updates inactive${NC}\n"; h_warn "Auto updates not active"; } ;;
     dnf)
-      if svc_row "dnf-automatic.timer" "dnf-automatic.timer"; then
-        h_pass "Automatic security updates active"
-      else
-        warn_line "dnf-automatic.timer not active"; h_warn "Auto security updates not active"
-      fi ;;
+      svc_row "dnf-automatic.timer" "dnf-automatic.timer" \
+        && h_pass "Auto security updates active" \
+        || { printf "  ${BY}⚠  auto updates inactive${NC}\n"; h_warn "Auto updates not active"; } ;;
   esac
 
-  # Docker (if present)
   if command -v docker &>/dev/null; then
     svc_row "docker" "docker" || true
-    local containers; containers=$(docker ps --format "{{.Names}} — {{.Status}}" 2>/dev/null || echo "")
-    if [[ -n "$containers" ]]; then
-      dim_line "Running containers:"
-      echo "$containers" | awk '{printf "  %s\n", $0}'
-    else
-      dim_line "  No running containers"
-    fi
+    local containers; containers=$(docker ps --format "  ${DIM}↳${NC} {{.Names}}  {{.Status}}" 2>/dev/null || true)
+    [[ -n "$containers" ]] && echo "$containers"
   fi
 
-  # Failed units
   echo
   local failed_units
-  failed_units=$(esudo systemctl list-units --state=failed --no-legend --no-pager 2>/dev/null | grep -v "^$" || true)
+  failed_units=$(esudo systemctl list-units --state=failed --no-legend --no-pager 2>/dev/null \
+                 | grep -v "^$" || true)
   if [[ -n "$failed_units" ]]; then
-    fail_line "Failed systemd units:"
-    echo "$failed_units" | head -10 | awk '{printf "  %-38s %s\n", $1, $4}'
+    printf "  ${BR}✗  Failed systemd units:${NC}\n"
+    echo "$failed_units" | head -8 | awk '{printf "     \033[1;31m%s\033[0m\n",$1}'
     local n; n=$(echo "$failed_units" | grep -c "." || echo "?")
-    h_fail "$n systemd unit(s) in failed state"
+    h_fail "$n systemd unit(s) failed"
   else
-    ok "No failed systemd units"; h_pass "No failed systemd units"
+    printf "  ${BG}✔${NC}  No failed systemd units\n"
+    h_pass "No failed systemd units"
   fi
 }
 
@@ -477,48 +532,46 @@ check_services() {
 check_performance() {
   section "PERFORMANCE"
 
-  local cpu_count load_1 load_5 load_15
-  cpu_count=$(nproc)
+  local load_1 load_5 load_15 cpu_count lp
   read -r load_1 load_5 load_15 _ < /proc/loadavg
+  cpu_count=$(nproc)
+  lp=$(awk "BEGIN{printf \"%.0f\", $load_1/$cpu_count*100}")
 
-  local load_pct
-  load_pct=$(awk "BEGIN{printf \"%.0f\", $load_1 / $cpu_count * 100}")
+  echo
+  metric "Load"  "$lp"  "${load_1} / ${load_5} / ${load_15}  (1m / 5m / 15m,  ${cpu_count} CPUs)"
 
-  kv "CPUs:"      "$cpu_count"
-  kv "Load avg:"  "${load_1} / ${load_5} / ${load_15}  (1m / 5m / 15m)"
-  kv "Load (1m):" "${load_pct}% of capacity"
-
-  if   (( load_pct >= 200 )); then fail_line "Load critical (${load_1} on ${cpu_count} CPU)"; h_fail "Load critical: ${load_1} (${load_pct}%)"
-  elif (( load_pct >= 100 )); then warn_line "Load high (${load_1} on ${cpu_count} CPU)";     h_warn "Load high: ${load_1} (${load_pct}%)"
-  else                              h_pass "Load normal: ${load_1} (${load_pct}%)"
-  fi
-
-  # Memory available (quick look)
   local mem_avail_pct
-  mem_avail_pct=$(awk '/^MemTotal/{t=$2} /^MemAvailable/{a=$2} END{printf "%.0f", a/t*100}' /proc/meminfo)
-  kv "Memory avail:" "${mem_avail_pct}% free"
-
-  # Top 5 by CPU
-  echo
-  dim_line "Top 5 by CPU:"
-  ps axo user:12,pid,pcpu,pmem,comm --sort=-%cpu 2>/dev/null | head -6 | awk '{printf "  %s\n", $0}'
+  mem_avail_pct=$(awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{printf "%.0f",a/t*100}' /proc/meminfo)
+  local mem_used_pct=$(( 100 - mem_avail_pct ))
+  metric "Memory" "$mem_used_pct" "${mem_avail_pct}% available"
 
   echo
-  dim_line "Top 5 by memory:"
-  ps axo user:12,pid,pcpu,pmem,comm --sort=-%mem 2>/dev/null | head -6 | awk '{printf "  %s\n", $0}'
+  printf "  ${DIM}Top 5 by CPU:${NC}\n"
+  ps axo user:12,pid,pcpu,pmem,comm --sort=-%cpu 2>/dev/null \
+    | head -6 | awk 'NR==1{printf "  \033[2m%-12s %6s %5s %5s %s\033[0m\n",$1,$2,$3,$4,$5; next}
+                     {printf "  %-12s \033[2m%6s\033[0m %5s %5s %s\n",$1,$2,$3,$4,$5}'
 
-  # OOM events — use wc -l (always exits 0, no double-output risk)
+  echo
+  printf "  ${DIM}Top 5 by memory:${NC}\n"
+  ps axo user:12,pid,pcpu,pmem,comm --sort=-%mem 2>/dev/null \
+    | head -6 | awk 'NR==1{printf "  \033[2m%-12s %6s %5s %5s %s\033[0m\n",$1,$2,$3,$4,$5; next}
+                     {printf "  %-12s \033[2m%6s\033[0m %5s %5s %s\n",$1,$2,$3,$4,$5}'
+
   local oom=0
   oom=$(esudo journalctl -k --since boot 2>/dev/null \
-    | grep -E "oom_kill_process|Out of memory" | wc -l || true)
+        | grep -E "oom_kill_process|Out of memory" | wc -l || true)
   oom=${oom:-0}
-  kv "OOM events:" "$oom since last boot"
-  (( oom > 0 )) && { warn_line "OOM killer has fired $oom time(s) since boot"; h_warn "OOM: $oom kill event(s) since boot"; }
+  echo
+  if (( oom > 0 )); then
+    printf "  ${BY}⚠  OOM killer fired %d time(s) since boot${NC}\n" "$oom"
+    h_warn "OOM: $oom kill event(s) since boot"
+  else
+    printf "  ${BG}✔${NC}  No OOM events since boot\n"
+  fi
 
-  # I/O wait (optional, if sysstat installed)
   if command -v iostat &>/dev/null; then
     local iowait; iowait=$(iostat -c 1 1 2>/dev/null | awk 'NR==4{print $4}')
-    [[ -n "$iowait" ]] && kv "I/O wait:" "${iowait}%"
+    [[ -n "$iowait" ]] && printf "  ${DIM}I/O wait:${NC}  %s%%\n" "$iowait"
   fi
 }
 
@@ -527,53 +580,58 @@ check_performance() {
 # ══════════════════════════════════════════════════════════════════════════════
 check_updates() {
   section "UPDATES"
+  echo
 
   case "$PKG_MANAGER" in
     apt)
-      dim_line "Checking cached package index (no network call)..."
       local dry_run_out total sec
       dry_run_out=$(apt-get -q --dry-run upgrade 2>/dev/null || true)
       total=$(echo "$dry_run_out" | grep -c "^Inst" || true); total=${total:-0}
       sec=$(echo "$dry_run_out"   | grep "^Inst" | grep -ci security || true); sec=${sec:-0}
-      kv "Pending updates:"    "$total total  |  $sec security"
 
-      if   (( sec   > 0  )); then fail_line "$sec security update(s) pending!"; h_fail "$sec pending security updates"
-      else                        h_pass "No pending security updates"
-      fi
-      (( total > 20 )) && { warn_line "$total total updates pending"; h_warn "$total total package updates pending"; }
-
-      # Reboot required
-      if [[ -f /var/run/reboot-required ]]; then
-        warn_line "System reboot is required!"; h_warn "Reboot required"
-        [[ -f /var/run/reboot-required.pkgs ]] \
-          && dim_line "Packages: $(tr '\n' ',' < /var/run/reboot-required.pkgs | sed 's/,$//')"
+      if (( sec > 0 )); then
+        printf "  ${BR}✗  %d security update(s) pending  ${DIM}(%d total)${NC}\n" "$sec" "$total"
+        h_fail "$sec pending security updates"
+      elif (( total > 0 )); then
+        printf "  ${BY}⚠  %d update(s) pending (0 security)${NC}\n" "$total"
+        h_warn "$total package updates pending"
       else
-        ok "No reboot required"; h_pass "No reboot required"
+        printf "  ${BG}✔${NC}  All packages up to date\n"
+        h_pass "No pending security updates"
+      fi
+      (( total > 20 )) && { printf "  ${BY}⚠  %d total updates pending${NC}\n" "$total"
+                             h_warn "$total total updates pending"; }
+
+      if [[ -f /var/run/reboot-required ]]; then
+        printf "  ${BY}⚠  Reboot required${NC}"
+        [[ -f /var/run/reboot-required.pkgs ]] && \
+          printf "  ${DIM}(%s)${NC}" "$(tr '\n' ',' < /var/run/reboot-required.pkgs | sed 's/,$//')"
+        printf "\n"
+        h_warn "Reboot required"
+      else
+        printf "  ${BG}✔${NC}  No reboot required\n"
+        h_pass "No reboot required"
       fi
 
-      # Last upgrade timestamp
       local last_up
       last_up=$(stat -c '%y' /var/lib/apt/periodic/upgrade-stamp 2>/dev/null | cut -d. -f1 \
-             || stat -c '%y' /var/lib/dpkg/lock 2>/dev/null | cut -d. -f1 \
-             || echo "unknown")
-      kv "Last upgrade:" "$last_up"
+             || stat -c '%y' /var/lib/dpkg/lock 2>/dev/null | cut -d. -f1 || echo "unknown")
+      printf "  ${DIM}Last upgrade:${NC}  %s\n" "$last_up"
       ;;
 
     dnf|yum)
-      dim_line "Checking for security updates..."
       local sec total
       sec=$(esudo "$PKG_MANAGER" check-update --security -q 2>/dev/null \
-            | grep -cE "^\S+\.(x86_64|aarch64|noarch|i686)" || echo 0)
+            | grep -cE "^\S+\.(x86_64|aarch64|noarch|i686)" || true); sec=${sec:-0}
       total=$(esudo "$PKG_MANAGER" check-update -q 2>/dev/null \
-              | grep -cE "^\S+\.(x86_64|aarch64|noarch|i686)" || echo 0)
-      kv "Pending updates:" "$total total  |  $sec security"
-      (( sec > 0 )) && { fail_line "$sec security update(s) pending!"; h_fail "$sec pending security updates"; } \
-                     || h_pass "No pending security updates"
+              | grep -cE "^\S+\.(x86_64|aarch64|noarch|i686)" || true); total=${total:-0}
+      if (( sec > 0 )); then
+        printf "  ${BR}✗  %d security update(s) pending${NC}\n" "$sec"; h_fail "$sec pending security updates"
+      else
+        printf "  ${BG}✔${NC}  No pending security updates\n"; h_pass "No pending security updates"
+      fi
       ;;
-
-    *)
-      dim_line "Update check not implemented for: $PKG_MANAGER"
-      ;;
+    *) printf "  ${DIM}Update check not implemented for: %s${NC}\n" "$PKG_MANAGER" ;;
   esac
 }
 
@@ -585,7 +643,7 @@ check_kernel() {
 
   get_sysctl() { cat "/proc/sys/${1//\./\/}" 2>/dev/null || echo "N/A"; }
 
-  local swappiness vfs_cache tcp_sync ip_fwd dmesg_r dirty_r
+  local swappiness vfs_cache dirty_r tcp_sync ip_fwd dmesg_r
   swappiness=$(get_sysctl "vm.swappiness")
   vfs_cache=$(get_sysctl  "vm.vfs_cache_pressure")
   dirty_r=$(get_sysctl    "vm.dirty_ratio")
@@ -593,41 +651,45 @@ check_kernel() {
   ip_fwd=$(get_sysctl     "net.ipv4.ip_forward")
   dmesg_r=$(get_sysctl    "kernel.dmesg_restrict")
 
-  kv "vm.swappiness:"            "$swappiness"
-  kv "vm.vfs_cache_pressure:"    "$vfs_cache"
-  kv "vm.dirty_ratio:"           "$dirty_r"
-  kv "net.ipv4.tcp_syncookies:"  "$tcp_sync"
-  kv "net.ipv4.ip_forward:"      "$ip_fwd"
-  kv "kernel.dmesg_restrict:"    "$dmesg_r"
+  echo
+  # Two-column sysctl display with inline check marks
+  printf "  ${DIM}vm.swappiness${NC}          %-6s  " \
+    "$(cv "$swappiness" "" "")"; [[ "$swappiness" =~ ^[0-9]+$ ]] && (( swappiness <= 10 )) \
+    && printf "${BG}✔${NC}" || printf "${BY}~${NC}"; printf "  "
+  printf "  ${DIM}vm.vfs_cache_pressure${NC}  %s\n" "$vfs_cache"
 
-  local fd_info; fd_info=$(awk '{print $1 " used / " $3 " max"}' /proc/sys/fs/file-nr 2>/dev/null || echo "N/A")
-  kv "Open file descriptors:" "$fd_info"
+  printf "  ${DIM}vm.dirty_ratio${NC}         %-6s     " "$dirty_r"
+  printf "  ${DIM}net.ipv4.tcp_syncookies${NC} %-3s " "$tcp_sync"
+  [[ "$tcp_sync" == "1" ]] && printf "${BG}✔${NC}" || printf "${BR}✗${NC}"; printf "\n"
 
-  # Health checks
+  printf "  ${DIM}net.ipv4.ip_forward${NC}    %-6s     " "$ip_fwd"
+  printf "  ${DIM}kernel.dmesg_restrict${NC}   %s\n" "$dmesg_r"
+
+  local fd_info; fd_info=$(awk '{print $1 " / " $3}' /proc/sys/fs/file-nr 2>/dev/null || echo "N/A")
+  printf "  ${DIM}Open file descriptors:${NC}  %s\n" "$fd_info"
+
   [[ "$swappiness" =~ ^[0-9]+$ ]] && (( swappiness > 30 )) \
-    && { warn_line "vm.swappiness=$swappiness (recommend ≤10 for servers)"; h_warn "Kernel: vm.swappiness=$swappiness too high"; }
+    && { printf "  ${BY}⚠  vm.swappiness=%s (recommend ≤10 for servers)${NC}\n" "$swappiness"
+         h_warn "Kernel: vm.swappiness=$swappiness too high"; }
   [[ "$tcp_sync" == "0" ]] \
-    && { warn_line "tcp_syncookies=0 (SYN flood protection off)"; h_warn "Kernel: tcp_syncookies disabled"; }
-  [[ "$ip_fwd" == "1" ]] \
-    && dim_line "ip_forward=1 (expected if Docker/VPN/routing is active)"
+    && { printf "  ${BY}⚠  tcp_syncookies disabled (SYN flood risk)${NC}\n"
+         h_warn "Kernel: tcp_syncookies=0"; }
 
-  # Active sysctl drop-ins
   echo
-  dim_line "Active sysctl drop-in files:"
-  ls /etc/sysctl.d/ 2>/dev/null | grep -v "^$" | awk '{printf "  %s\n", $0}' || dim_line "(none or not accessible)"
+  printf "  ${DIM}sysctl drop-ins:${NC}  "
+  ls /etc/sysctl.d/ 2>/dev/null | grep -v "^$" | tr '\n' ' ' | awk '{printf "%s",$0}'; printf "\n"
 
-  # Recent kernel errors
   echo
-  dim_line "Kernel errors in last hour:"
   local kerr=""
   kerr=$(esudo dmesg --level=err,crit,alert,emerg --since "1 hour ago" 2>/dev/null \
-      || esudo dmesg -T 2>/dev/null | grep -iE "error|fail|crit" | tail -5 \
-      || true)
+      || esudo dmesg -T 2>/dev/null | grep -iE "error|fail|crit" | tail -5 || true)
   if [[ -n "$kerr" ]]; then
-    echo "$kerr" | tail -5 | awk '{printf "  %s\n", $0}'
-    fail_line "Kernel errors in dmesg (last hour)"; h_fail "Kernel errors detected"
+    printf "  ${BR}✗  Kernel errors in last hour:${NC}\n"
+    echo "$kerr" | tail -5 | awk '{printf "  \033[2m%s\033[0m\n",$0}'
+    h_fail "Kernel errors in dmesg"
   else
-    ok "No kernel errors in dmesg (last hour)"; h_pass "No recent kernel errors"
+    printf "  ${BG}✔${NC}  No kernel errors (dmesg, last hour)\n"
+    h_pass "No recent kernel errors"
   fi
 }
 
@@ -637,35 +699,39 @@ check_kernel() {
 check_scheduled() {
   section "SCHEDULED TASKS"
 
-  # User crontab
   local current_user="${SUDO_USER:-$USER}"
-  dim_line "Crontab ($current_user):"
-  local cron_out; cron_out=$(crontab -u "$current_user" -l 2>/dev/null || crontab -l 2>/dev/null || echo "(none)")
-  echo "$cron_out" | grep -vE "^#|^$" | awk '{printf "  %s\n", $0}' \
-    || echo -e "  ${DIM}(none)${NC}"
+  local cron_out root_cron
 
-  # Root crontab
+  cron_out=$(crontab -u "$current_user" -l 2>/dev/null || crontab -l 2>/dev/null || echo "")
+  local user_cron; user_cron=$(echo "$cron_out" | grep -vE "^#|^$" | wc -l | tr -d ' ')
+
   if [[ "$HAS_SUDO" == "true" ]]; then
-    local root_cron; root_cron=$(esudo crontab -u root -l 2>/dev/null || echo "(none)")
-    dim_line "Crontab (root):"
-    echo "$root_cron" | grep -vE "^#|^$" | awk '{printf "  %s\n", $0}' \
-      || echo -e "  ${DIM}(none)${NC}"
+    root_cron=$(esudo crontab -u root -l 2>/dev/null || echo "")
+    local root_entries; root_entries=$(echo "$root_cron" | grep -vE "^#|^$" | wc -l | tr -d ' ')
+    printf "\n  ${DIM}Crontab:${NC}  %s: %s entries  ·  root: %s entries\n" \
+      "$current_user" "$user_cron" "$root_entries"
+  else
+    printf "\n  ${DIM}Crontab (%s):${NC}  %s entries\n" "$current_user" "$user_cron"
   fi
 
-  # /etc/cron.d
-  echo
-  dim_line "/etc/cron.d entries:"
-  ls /etc/cron.d/ 2>/dev/null | grep -v "^$" | awk '{printf "  %s\n", $0}' || dim_line "(empty or not accessible)"
+  printf "  ${DIM}cron.d:${NC}  "
+  ls /etc/cron.d/ 2>/dev/null | grep -v "^$" | tr '\n' ',' | sed 's/,$//' | awk '{printf "%s",$0}'
+  printf "\n"
 
-  # Systemd timers — buffer first to avoid SIGPIPE on head closing the pipe early
   echo
-  dim_line "Next systemd timers:"
+  printf "  ${DIM}Upcoming systemd timers:${NC}\n"
   local timer_out
   timer_out=$(systemctl list-timers --no-pager 2>/dev/null || true)
   if [[ -n "$timer_out" ]]; then
-    echo "$timer_out" | head -9 | awk 'NR>1{printf "  %s\n", $0}'
-  else
-    dim_line "(unavailable)"
+    echo "$timer_out" | awk '
+      NR>1 && /[a-zA-Z]/ && !/^NEXT/ && !/listed/{
+        # field 1-4=NEXT datetime, 5-6=LEFT, 7-10=LAST, 11-12=PASSED, 13=UNIT, rest=ACTIVATES
+        split($0,a," ")
+        left=$5" "$6
+        unit=$13
+        if(unit!="" && unit!="UNIT")
+          printf "  \033[2m%-14s\033[0m  %s\n", left, unit
+      }' | head -8
   fi
 }
 
@@ -673,30 +739,53 @@ check_scheduled() {
 # SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 print_summary() {
-  echo
-  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}${BOLD}║              SERVER HEALTH SUMMARY                  ║${NC}"
-  echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
-  echo
+  local np=${#HEALTH_PASS[@]} nw=${#HEALTH_WARN[@]} nf=${#HEALTH_FAIL[@]}
+  local total=$(( np + nw + nf )) i W2=66
 
-  local item
+  echo
+  printf "${BC}${BOLD}┌"; local j; for ((j=0;j<W2;j++)); do printf '─'; done; printf "┐${NC}\n"
+  printf "${BC}${BOLD}│${NC}  ${BOLD}HEALTH SUMMARY${NC}"
+  printf "%*s" $(( W2 - 16 )) ""; printf "${BC}${BOLD}│${NC}\n"
+  printf "${BC}${BOLD}├"; for ((j=0;j<W2;j++)); do printf '─'; done; printf "┤${NC}\n"
+
+  # Score bar
+  local pass_w=$(( np * 30 / (total>0?total:1) ))
+  local warn_w=$(( nw * 30 / (total>0?total:1) ))
+  local fail_w=$(( nf * 30 / (total>0?total:1) ))
+  printf "${BC}${BOLD}│${NC}  "
+  printf "${BG}"; for ((j=0;j<pass_w;j++)); do printf '█'; done; printf "${NC}"
+  printf "${BY}"; for ((j=0;j<warn_w;j++)); do printf '█'; done; printf "${NC}"
+  printf "${BR}"; for ((j=0;j<fail_w;j++)); do printf '█'; done; printf "${NC}"
+  local rem=$(( 30 - pass_w - warn_w - fail_w ))
+  printf "${DIM}"; for ((j=0;j<rem;j++)); do printf '░'; done; printf "${NC}"
+  printf "  ${BG}%-2d PASS${NC}  ${BY}%-2d WARN${NC}  ${BR}%-2d FAIL${NC}" "$np" "$nw" "$nf"
+  printf "%*s" $(( W2 - 30 - 24 - 2 )) ""
+  printf "${BC}${BOLD}│${NC}\n"
+
+  printf "${BC}${BOLD}├"; for ((j=0;j<W2;j++)); do printf '─'; done; printf "┤${NC}\n"
+
+  # Failures first, then warnings, then passes
+  local printed=0
   for item in "${HEALTH_FAIL[@]+"${HEALTH_FAIL[@]}"}"; do
-    echo -e "  ${RED}[FAIL]${NC}  $item"
+    printf "${BC}${BOLD}│${NC}  ${BR}✗${NC}  %-${W2}s${BC}${BOLD}│${NC}\n" "$item"
+    (( printed++ ))
   done
   for item in "${HEALTH_WARN[@]+"${HEALTH_WARN[@]}"}"; do
-    echo -e "  ${YELLOW}[WARN]${NC}  $item"
+    printf "${BC}${BOLD}│${NC}  ${BY}⚠${NC}  %-${W2}s${BC}${BOLD}│${NC}\n" "$item"
+    (( printed++ ))
   done
+  # Show only first few passes to keep summary compact
+  local pass_shown=0
   for item in "${HEALTH_PASS[@]+"${HEALTH_PASS[@]}"}"; do
-    echo -e "  ${GREEN}[PASS]${NC}  $item"
+    (( pass_shown >= 8 )) && break
+    printf "${BC}${BOLD}│${NC}  ${BG}✔${NC}  %-${W2}s${BC}${BOLD}│${NC}\n" "$item"
+    (( pass_shown++ ))
   done
+  (( np > 8 )) && printf "${BC}${BOLD}│${NC}  ${DIM}✔  … and %d more passing checks${NC}%*s${BC}${BOLD}│${NC}\n" \
+    "$(( np - 8 ))" "$(( W2 - $(printf "   … and %d more passing checks" "$(( np - 8 ))" | wc -c) ))" ""
 
-  local np=${#HEALTH_PASS[@]} nw=${#HEALTH_WARN[@]} nf=${#HEALTH_FAIL[@]}
-  local total=$(( np + nw + nf ))
-  echo
-  echo -e "  ${BOLD}Checks:${NC}  ${GREEN}${np} PASS${NC}  /  ${YELLOW}${nw} WARN${NC}  /  ${RED}${nf} FAIL${NC}  (${total} total)"
-  echo
+  printf "${BC}${BOLD}└"; for ((j=0;j<W2;j++)); do printf '─'; done; printf "┘${NC}\n\n"
 
-  # Exit code convention: 0=all clear, 1=warnings, 2=failures
   (( nf > 0 )) && return 2
   (( nw > 0 )) && return 1
   return 0
