@@ -277,7 +277,15 @@ step_install_zellij() {
 step_setup_swap() {
   section "Configuring swap"
 
-  # Skip if any swap is already active
+  # Always ensure kernel tuning is applied (safe to set even if swap pre-exists)
+  local sysctl_conf="/etc/sysctl.d/99-swap.conf"
+  cat > "$sysctl_conf" <<'EOF'
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+EOF
+  sysctl -p "$sysctl_conf" > /dev/null
+
+  # Skip swap file creation if any swap is already active
   if [[ $(swapon --show | wc -l) -gt 0 ]]; then
     log "Swap already configured:"
     swapon --show
@@ -322,16 +330,6 @@ step_setup_swap() {
     echo "${swapfile} none swap sw 0 0" >> /etc/fstab
   fi
 
-  # Tune kernel swap behaviour (better for servers)
-  #   vm.swappiness=10 : prefer RAM, use swap only when necessary
-  #   vm.vfs_cache_pressure=50 : retain filesystem cache longer
-  local sysctl_conf="/etc/sysctl.d/99-swap.conf"
-  cat > "$sysctl_conf" <<'EOF'
-vm.swappiness = 10
-vm.vfs_cache_pressure = 50
-EOF
-  sysctl -p "$sysctl_conf" > /dev/null
-
   log "Swap configured: ${swap_gb} GB at $swapfile (swappiness=10)."
 }
 
@@ -340,13 +338,23 @@ step_harden_ssh() {
   section "Hardening SSH configuration"
 
   local sshd_config="/etc/ssh/sshd_config"
-  local backup="${sshd_config}.bak.$(date +%Y%m%d%H%M%S)"
+  local backup="${sshd_config}.bak"
+  local changed=false
 
-  cp "$sshd_config" "$backup"
-  log "SSH config backed up to: $backup"
-
+  # Sets a key=value in sshd_config. No-ops if already correct.
+  # Creates a single backup (.bak) on the first change of each run.
   set_sshd_option() {
     local key="$1" val="$2"
+    # Already set to the exact desired value (uncommented)? Skip.
+    if grep -qE "^\s*${key}\s+${val}\s*$" "$sshd_config" 2>/dev/null; then
+      return
+    fi
+    # First change this run: back up current state
+    if [[ "$changed" == "false" ]]; then
+      cp "$sshd_config" "$backup"
+      log "SSH config backed up to: $backup"
+    fi
+    changed=true
     if grep -qE "^\s*#?\s*${key}\s" "$sshd_config"; then
       sed -i -E "s|^\s*#?\s*${key}\s.*|${key} ${val}|" "$sshd_config"
     else
@@ -369,6 +377,11 @@ step_harden_ssh() {
   set_sshd_option "PrintLastLog"                    "yes"
   set_sshd_option "ClientAliveInterval"             "300"
   set_sshd_option "ClientAliveCountMax"             "2"
+
+  if [[ "$changed" == "false" ]]; then
+    log "SSH already hardened. No changes needed."
+    return
+  fi
 
   # Validate config before restarting
   if sshd -t -f "$sshd_config" 2>/dev/null; then
@@ -403,7 +416,12 @@ bantime  = 24h
 EOF
 
   systemctl enable fail2ban
-  systemctl restart fail2ban
+  # reload preserves running state and existing bans; fall back to start if not yet running
+  if systemctl is-active fail2ban &>/dev/null; then
+    systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban
+  else
+    systemctl start fail2ban
+  fi
   log "fail2ban configured (SSH: max 3 retries → 24h ban)."
 }
 
