@@ -110,10 +110,37 @@ detect_os() {
   log "Detected OS: ${PRETTY_NAME:-$OS_ID} (package manager: $PKG_MANAGER)"
 }
 
+# ── APT lock helper ───────────────────────────────────────────────────────────
+# Waits until all apt/dpkg locks are free (up to 5 minutes).
+# Cloud images and unattended-upgrades often hold the lock at boot.
+wait_for_apt() {
+  [[ "$PKG_MANAGER" != "apt" ]] && return
+  local i=0 max=60  # 60 × 5 s = 5 min
+  local locks=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock)
+  while true; do
+    local busy=false
+    for lock in "${locks[@]}"; do
+      if ! flock -n "$lock" true 2>/dev/null; then
+        busy=true; break
+      fi
+    done
+    [[ "$busy" == "false" ]] && break
+    if (( i == 0 )); then
+      local holder
+      holder=$(lsof /var/lib/dpkg/lock-frontend 2>/dev/null \
+               | awk 'NR==2{print $1" (pid "$2")"}' || true)
+      warn "apt is locked by ${holder:-another process}. Waiting up to 5 min..."
+    fi
+    (( ++i >= max )) && die "apt lock not released after 5 minutes. Check: lsof /var/lib/dpkg/lock-frontend"
+    sleep 5
+  done
+  (( i > 0 )) && log "apt lock released after $(( i * 5 ))s."
+}
+
 # ── Package management helpers ────────────────────────────────────────────────
 pkg_update() {
   case "$PKG_MANAGER" in
-    apt)     apt-get update -qq && apt-get upgrade -y -qq ;;
+    apt)     wait_for_apt; apt-get update -qq && apt-get upgrade -y -qq ;;
     dnf|yum) $PKG_MANAGER update -y -q ;;
     pacman)  pacman -Syu --noconfirm -q ;;
   esac
@@ -121,7 +148,7 @@ pkg_update() {
 
 pkg_install() {
   case "$PKG_MANAGER" in
-    apt)     apt-get install -y -qq "$@" ;;
+    apt)     wait_for_apt; apt-get install -y -qq "$@" ;;
     dnf|yum) $PKG_MANAGER install -y -q "$@" ;;
     pacman)  pacman -S --noconfirm -q "$@" ;;
   esac
