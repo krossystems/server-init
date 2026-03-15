@@ -155,27 +155,37 @@ pkg_install() {
 }
 
 # ── Step 1: Update packages ───────────────────────────────────────────────────
-# On Ubuntu/Debian, unattended-upgrades and apt-daily services often hold the
-# dpkg lock for 10–30 min after boot. Waiting passively is unreliable — we
-# stop them first, let any running operation finish, and clean up dpkg state.
+# On Ubuntu/Debian, unattended-upgrades / apt-daily often hold the dpkg lock
+# for 10–30 min after boot.  We must actively kill them — passive waiting
+# (DPkg::Lock::Timeout, systemctl stop) can block just as long.
 stop_unattended_apt() {
   [[ "$PKG_MANAGER" != "apt" ]] && return
 
-  # Disable timers so they don't re-trigger during our setup
-  systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+  # 1. Disable timers so nothing re-triggers during setup
+  systemctl stop    apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
   systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 
-  # systemctl stop on an active oneshot service waits for it to finish
-  # (with systemd's DefaultTimeoutStopSec, typically 90 s, then SIGKILL).
-  local svc
-  for svc in apt-daily.service apt-daily-upgrade.service unattended-upgrades.service; do
-    if systemctl is-active "$svc" &>/dev/null; then
-      log "Stopping $svc (waiting for it to finish)..."
-      systemctl stop "$svc" 2>/dev/null || true
-    fi
-  done
+  # 2. Kill the services (SIGTERM to entire cgroup — immediate, no grace wait)
+  systemctl kill apt-daily.service apt-daily-upgrade.service \
+                 unattended-upgrades.service 2>/dev/null || true
+  sleep 1
 
-  # Repair any half-configured packages left by a killed dpkg
+  # 3. If lock is still held (orphaned / reparented process), kill it directly
+  local pids
+  pids=$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null) || true
+  if [[ -n "$pids" ]]; then
+    warn "dpkg lock held by pid $pids — killing..."
+    kill $pids 2>/dev/null || true
+    sleep 2
+    # Force-kill anything that survived SIGTERM
+    pids=$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null) || true
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+
+  # 4. Repair any half-configured packages left by a killed dpkg
   dpkg --configure -a 2>/dev/null || true
 }
 
