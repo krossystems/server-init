@@ -165,6 +165,9 @@ stop_unattended_apt() {
   systemctl stop    apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
   systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 
+  # Safety net: re-enable timers on exit (even if script fails mid-way)
+  trap 'systemctl enable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true' EXIT
+
   # 2. Kill the services (SIGTERM to entire cgroup — immediate, no grace wait)
   systemctl kill apt-daily.service apt-daily-upgrade.service \
                  unattended-upgrades.service 2>/dev/null || true
