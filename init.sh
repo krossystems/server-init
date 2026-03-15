@@ -13,6 +13,16 @@
 
 set -euo pipefail
 
+# Print the failing line/command whenever set -e triggers an exit
+trap 'error "Aborted at line $LINENO: $BASH_COMMAND"' ERR
+
+# Non-interactive environment — set globally so all child processes inherit
+# (needrestart, debconf, dpkg post-install scripts, etc.)
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+export NEEDRESTART_MODE=a       # auto-restart services on Ubuntu 22.04+
+export NEEDRESTART_SUSPEND=1    # suppress needrestart prompts entirely
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 NEW_USER="${NEW_USER:-krossys}"
 INSTALL_ZELLIJ="${INSTALL_ZELLIJ:-true}"
@@ -111,14 +121,9 @@ detect_os() {
 }
 
 # ── Package management helpers ────────────────────────────────────────────────
-# apt wrapper: fully non-interactive, waits up to 5 min for the lock
-# (DPkg::Lock::Timeout lets apt itself handle lock contention — more
-# reliable than external polling because it holds the lock continuously).
-# --force-confdef/confold prevents dpkg from stopping on config-file
-# conflicts. NEEDRESTART_MODE=a auto-restarts services on Ubuntu 22.04+.
+# apt wrapper: non-interactive, waits up to 5 min for the dpkg lock,
+# resolves config-file conflicts automatically (env vars inherited from top).
 _apt() {
-  DEBIAN_FRONTEND=noninteractive \
-  NEEDRESTART_MODE=a \
   apt-get \
     -y \
     -o DPkg::Lock::Timeout=300 \
@@ -130,8 +135,10 @@ _apt() {
 pkg_update() {
   case "$PKG_MANAGER" in
     apt)
-      # update has no dpkg interaction, but still needs the lock timeout
-      DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update
+      # apt-get update may return non-zero if some repos are unreachable —
+      # that is non-fatal; we still proceed with whatever was fetched.
+      apt-get -q -o DPkg::Lock::Timeout=300 update \
+        || warn "Some package lists failed to fetch (continuing with cached data)"
       _apt upgrade
       ;;
     dnf|yum) $PKG_MANAGER update -y -q ;;
