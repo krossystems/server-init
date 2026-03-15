@@ -155,8 +155,33 @@ pkg_install() {
 }
 
 # ── Step 1: Update packages ───────────────────────────────────────────────────
+# On Ubuntu/Debian, unattended-upgrades and apt-daily services often hold the
+# dpkg lock for 10–30 min after boot. Waiting passively is unreliable — we
+# stop them first, let any running operation finish, and clean up dpkg state.
+stop_unattended_apt() {
+  [[ "$PKG_MANAGER" != "apt" ]] && return
+
+  # Disable timers so they don't re-trigger during our setup
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+  systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+
+  # systemctl stop on an active oneshot service waits for it to finish
+  # (with systemd's DefaultTimeoutStopSec, typically 90 s, then SIGKILL).
+  local svc
+  for svc in apt-daily.service apt-daily-upgrade.service unattended-upgrades.service; do
+    if systemctl is-active "$svc" &>/dev/null; then
+      log "Stopping $svc (waiting for it to finish)..."
+      systemctl stop "$svc" 2>/dev/null || true
+    fi
+  done
+
+  # Repair any half-configured packages left by a killed dpkg
+  dpkg --configure -a 2>/dev/null || true
+}
+
 step_update_packages() {
   section "Updating package lists and upgrading system"
+  stop_unattended_apt
   pkg_update
   log "System packages updated."
 }
@@ -484,6 +509,8 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
+      # Re-enable timers (stopped earlier by stop_unattended_apt)
+      systemctl enable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
       log "Automatic security updates configured (unattended-upgrades)."
       ;;
 
