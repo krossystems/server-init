@@ -62,8 +62,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Validation ────────────────────────────────────────────────────────────────
-[[ "$EUID" -ne 0 ]] && die "This script must be run as root (or with sudo)."
+# ── Root check / auto-elevate ─────────────────────────────────────────────────
+if [[ "$EUID" -ne 0 ]]; then
+  # Running as a file: re-exec under sudo transparently
+  if [[ -f "$0" ]] && command -v sudo &>/dev/null; then
+    exec sudo bash "$0" "$@"
+  fi
+  # Running via pipe (curl | bash): can't re-exec, give the correct command
+  die "Must run as root. Use: curl -fsSL <url> | sudo bash"
+fi
 
 if ! [[ "$NEW_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
   die "Invalid username: '$NEW_USER'. Must start with a letter/underscore and contain only a-z, 0-9, _ or -."

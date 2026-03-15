@@ -29,16 +29,16 @@ Also sets `vm.swappiness=10` and `vm.vfs_cache_pressure=50` — suitable default
 
 ## Quick start
 
-Connect as `root` (or your cloud provider's default user) and run:
+Connect to your server and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/init.sh | bash
+curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/init.sh | sudo bash
 ```
 
 With a custom username:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/init.sh | bash -s -- --username alice
+curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/init.sh | sudo bash -s -- --username alice
 ```
 
 > **Security note:** Piping `curl` to `bash` executes remote code directly. Review the script at the URL above before running it in a sensitive environment.
