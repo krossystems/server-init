@@ -27,6 +27,11 @@ export NEEDRESTART_SUSPEND=1    # suppress needrestart prompts entirely
 NEW_USER="${NEW_USER:-krossys}"
 INSTALL_ZELLIJ="${INSTALL_ZELLIJ:-true}"
 
+# Step outcome tracking (used by print_summary for smart messages)
+USER_EXISTED=false
+KEYS_EXISTED=false
+SSH_HARDENED=false
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
   GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
@@ -219,10 +224,10 @@ step_install_essentials() {
 step_create_user() {
   section "Creating user: $NEW_USER"
 
-  local user_existed=false
+  USER_EXISTED=false
   if id "$NEW_USER" &>/dev/null; then
     warn "User '$NEW_USER' already exists. Skipping creation."
-    user_existed=true
+    USER_EXISTED=true
   else
     useradd -m -s /bin/bash "$NEW_USER"
     log "User '$NEW_USER' created."
@@ -250,7 +255,7 @@ step_create_user() {
 
   # No password is set on a fresh account (SSH key login only via sshd config).
   # Set one manually for emergency VPS-console access: sudo passwd $NEW_USER
-  if [[ "$user_existed" == "false" ]]; then
+  if [[ "$USER_EXISTED" == "false" ]]; then
     log "No password set for '$NEW_USER'. Set one later for emergency console access: sudo passwd $NEW_USER"
   fi
 }
@@ -294,11 +299,13 @@ step_copy_ssh_keys() {
   install -d -m 700 -o "$NEW_USER" -g "$NEW_USER" "$dest_dir"
 
   if [[ -f "$dest_keys" && -s "$dest_keys" ]]; then
+    KEYS_EXISTED=true
     log "authorized_keys already exist for '$NEW_USER' — skipping copy to preserve existing keys."
     ssh-keygen -lf "$dest_keys" 2>/dev/null | sed 's/^/  /' || true
     return
   fi
 
+  KEYS_EXISTED=false
   install -m 600 -o "$NEW_USER" -g "$NEW_USER" "$src_keys" "$dest_keys"
   log "SSH authorized_keys copied to $dest_keys"
 }
@@ -461,6 +468,7 @@ step_harden_ssh() {
   set_sshd_option "ClientAliveCountMax"             "2"
 
   if [[ "$changed" == "false" ]]; then
+    SSH_HARDENED=true
     log "SSH already hardened. No changes needed."
     return
   fi
@@ -468,9 +476,11 @@ step_harden_ssh() {
   # Validate config before restarting
   local validation_err
   if validation_err=$(sshd -t -f "$sshd_config" 2>&1); then
+    SSH_HARDENED=true
     systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || true
     log "SSH service restarted with new configuration."
   else
+    SSH_HARDENED=false
     warn "SSH config validation failed:"
     warn "  $validation_err"
     cp "$backup" "$sshd_config"
@@ -568,25 +578,68 @@ print_summary() {
   echo -e "${BOLD}What was done:${NC}"
   echo "  ✔  System packages updated"
   echo "  ✔  Essential tools installed (git, curl, vim, htop, ...)"
-  echo "  ✔  Sudo user created: $NEW_USER"
-  echo "  ✔  SSH authorized_keys copied to $NEW_USER"
+
+  if [[ "${USER_EXISTED:-false}" == "true" ]]; then
+    echo "  ✔  Sudo user configured: $NEW_USER (already existed)"
+  else
+    echo "  ✔  Sudo user created: $NEW_USER"
+  fi
+
+  if [[ "${KEYS_EXISTED:-false}" == "true" ]]; then
+    echo "  ✔  SSH authorized_keys preserved for $NEW_USER"
+  else
+    echo "  ✔  SSH authorized_keys copied to $NEW_USER"
+  fi
+
   [[ "$INSTALL_ZELLIJ" == "true" ]] && echo "  ✔  zellij installed"
   echo "  ✔  Swap configured"
-  echo "  ✔  SSH hardened (key-only, no password auth)"
+
+  if [[ "${SSH_HARDENED:-false}" == "true" ]]; then
+    echo "  ✔  SSH hardened (key-only, no password auth)"
+  else
+    echo -e "  ${YELLOW}⚠${NC}  SSH hardening skipped (check warnings above)"
+  fi
+
   echo "  ✔  fail2ban configured"
   echo "  ✔  Automatic security updates enabled"
   echo
-  echo -e "${YELLOW}${BOLD}⚠  Required actions:${NC}"
-  echo "  1. Set a password for '$NEW_USER' (needed for VPS-console emergency access):"
-  echo -e "     ${BOLD}sudo passwd $NEW_USER${NC}"
-  echo "     SSH password login remains disabled — this is for console fallback only."
-  echo
-  echo "  2. Open a NEW terminal and verify SSH access as '$NEW_USER':"
-  echo "     ssh ${NEW_USER}@<server-ip>"
-  echo "     sudo whoami   # should print: root"
-  echo
-  echo "  3. Once confirmed, you can close the root session."
-  echo
+
+  # ── Dynamic action items (only show what's actually needed) ──
+  local action_num=0 has_header=false
+  local caller="${SUDO_USER:-root}"
+
+  # 1) Password check — only prompt if not already set
+  local pw_status
+  pw_status=$(passwd -S "$NEW_USER" 2>/dev/null | awk '{print $2}' || echo "")
+  if [[ "$pw_status" != "P" && "$pw_status" != "PS" ]]; then
+    if [[ "$has_header" == "false" ]]; then
+      echo -e "${YELLOW}${BOLD}Action required:${NC}"
+      has_header=true
+    fi
+    (( ++action_num ))
+    echo "  ${action_num}. Set a password for '$NEW_USER' (for emergency VPS-console access):"
+    echo -e "     ${BOLD}sudo passwd $NEW_USER${NC}"
+    echo "     SSH password login remains disabled — this is for console fallback only."
+    echo
+  fi
+
+  # 2) SSH verification — only if caller is not already the target user
+  if [[ "$caller" != "$NEW_USER" ]]; then
+    if [[ "$has_header" == "false" ]]; then
+      echo -e "${BOLD}Next steps:${NC}"
+      has_header=true
+    fi
+    (( ++action_num ))
+    echo "  ${action_num}. Open a NEW terminal and verify SSH access as '$NEW_USER':"
+    echo "     ssh ${NEW_USER}@<server-ip>"
+    echo "     sudo whoami   # should print: root"
+    echo
+  fi
+
+  if [[ "$has_header" == "false" ]]; then
+    echo -e "${GREEN}All done — no further action needed.${NC}"
+    echo
+  fi
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
