@@ -91,6 +91,61 @@ NEW_USER=alice bash init.sh
   ```
 - **Install a language runtime** (Node.js, Python, Go, etc.)
 
+## status.sh — Server health report
+
+After logging in as the new user, run `status.sh` to get a full picture of the server.
+
+```bash
+# Pull and run (recommended — full output)
+curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/status.sh \
+  | sudo bash
+
+# Or if already cloned
+sudo bash status.sh
+```
+
+### What it checks
+
+| Section | Checks |
+|---------|--------|
+| **System** | Hostname, OS, kernel, uptime, timezone, NTP sync, virt type |
+| **Hardware** | CPU model/cores, RAM usage, swap usage |
+| **Storage** | Disk usage per filesystem, inode usage, swap devices |
+| **Network** | Public IP, interfaces, gateway, DNS resolution, listening ports |
+| **Security** | SSH effective config, authorized keys + fingerprints, fail2ban status/bans, failed auth attempts (24h), top attacking IPs, last logins |
+| **Services** | sshd, fail2ban, auto-update daemon, Docker containers, any failed systemd units |
+| **Performance** | Load average vs CPU count, top 5 by CPU/RAM, OOM events, I/O wait |
+| **Updates** | Pending security updates, total pending, reboot-required flag |
+| **Kernel tuning** | swappiness, vfs_cache_pressure, tcp_syncookies, ip_forward, open fd count, recent dmesg errors |
+| **Scheduled tasks** | User/root crontab, /etc/cron.d, upcoming systemd timers |
+
+### Health summary
+
+Every check contributes a `[PASS]`, `[WARN]`, or `[FAIL]` result. The script ends with a consolidated summary:
+
+```
+╔══════════════════════════════════════════════════════╗
+║              SERVER HEALTH SUMMARY                  ║
+╚══════════════════════════════════════════════════════╝
+
+  [FAIL]  2 pending security updates
+  [WARN]  SSH: 143 failed auth attempts in 24h
+  [WARN]  Disk /dev/sda1 is 83% full
+  [PASS]  NTP synchronized
+  [PASS]  SSH: key-only auth
+  [PASS]  fail2ban active
+  [PASS]  No failed systemd units
+  ...
+
+  Checks:  8 PASS  /  2 WARN  /  1 FAIL  (11 total)
+```
+
+Exit codes: `0` = all clear, `1` = warnings only, `2` = at least one failure. Usable in CI or monitoring scripts.
+
+> **Note:** Running with `sudo` unlocks all checks (process names on ports, auth logs, fail2ban details, kernel errors). Without sudo, output is still useful but some sections are limited.
+
+---
+
 ## Contributing
 
 Pull requests are welcome. Please test on at least one supported distro before submitting.
