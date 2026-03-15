@@ -168,6 +168,12 @@ step_create_user() {
       ;;
   esac
 
+  # Passwordless sudo via a drop-in sudoers file (safer than editing /etc/sudoers)
+  local sudoers_file="/etc/sudoers.d/${NEW_USER}"
+  echo "${NEW_USER} ALL=(ALL) NOPASSWD: ALL" > "$sudoers_file"
+  chmod 440 "$sudoers_file"
+  log "Passwordless sudo configured for '$NEW_USER' ($sudoers_file)."
+
   # Lock password — SSH key login only
   passwd -l "$NEW_USER" &>/dev/null || true
   log "Password locked for '$NEW_USER' (SSH key login only)."
