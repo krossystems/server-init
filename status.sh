@@ -496,7 +496,7 @@ check_services() {
 
   case "$PKG_MANAGER" in
     apt)
-      svc_row "unattended-upgrades" "unattended-upgrades" \
+      svc_row "apt-daily-upgrade.timer" "unattended-upgrades (timer)" \
         && h_pass "Auto security updates active" \
         || { printf "  ${BY}⚠  auto updates inactive${NC}\n"; h_warn "Auto updates not active"; } ;;
     dnf)
