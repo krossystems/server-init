@@ -800,6 +800,97 @@ print_summary() {
   return 0
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 11 — USER ACCOUNTS
+# ══════════════════════════════════════════════════════════════════════════════
+check_users() {
+  section "USER ACCOUNTS"
+
+  # Global SSH password auth setting (re-read sshd effective config)
+  local sshd_t="" pw_auth_global="?"
+  sshd_t=$(esudo sshd -T 2>/dev/null || true)
+  [[ -n "$sshd_t" ]] \
+    && pw_auth_global=$(echo "$sshd_t" | awk 'tolower($1)=="passwordauthentication"{print $2;exit}') \
+    || pw_auth_global=$(grep -iE "^\s*PasswordAuthentication\s" /etc/ssh/sshd_config 2>/dev/null \
+                        | tail -1 | awk '{print $2}')
+  pw_auth_global="${pw_auth_global:-?}"
+
+  printf "\n  ${DIM}SSH PasswordAuthentication:${NC}  %s\n\n" "$(cv "$pw_auth_global" "no" "yes")"
+
+  # Table header
+  printf "  ${DIM}%-18s %-6s %-22s %-10s %s${NC}\n" \
+    "User" "UID" "Shell" "Password" "SSH Keys"
+  printf "  ${DIM}%s${NC}\n" "─────────────────────────────────────────────────────────────"
+
+  local any_no_password=false any_no_keys=false
+
+  # Iterate interactive users: root + UID >= 1000 with real shells
+  while IFS=: read -r user _ uid _ _ home shell; do
+    [[ "$user" != "root" ]] && (( uid < 1000 )) && continue
+    case "$shell" in
+      /sbin/nologin|/usr/sbin/nologin|/bin/false|/usr/bin/false|/bin/sync|/usr/bin/nologin)
+        continue ;;
+      "") continue ;;
+    esac
+
+    # Password status via passwd -S (needs sudo)
+    local pw_raw="" pw_status="" pw_display
+    if [[ "$HAS_SUDO" == "true" ]]; then
+      pw_raw=$(esudo passwd -S "$user" 2>/dev/null | awk '{print $2}')
+    fi
+    case "${pw_raw:-}" in
+      P|PS)  pw_status="set";    pw_display="${BG}set${NC}" ;;
+      L|LK)  pw_status="locked"; pw_display="${DIM}locked${NC}" ;;
+      NP)    pw_status="none";   pw_display="${BY}none${NC}" ;;
+      *)     pw_status="?";      pw_display="${DIM}?${NC}" ;;
+    esac
+
+    # Authorized SSH keys count
+    local auth_keys="${home}/.ssh/authorized_keys" key_count=0 key_display
+    if [[ -f "$auth_keys" && -s "$auth_keys" ]]; then
+      key_count=$(grep -cE "^(ssh-|ecdsa-|sk-)" "$auth_keys" 2>/dev/null || wc -l < "$auth_keys")
+      key_display="${BG}${key_count} key(s)${NC}"
+    else
+      key_display="${BY}none${NC}"
+    fi
+
+    # Print row
+    printf "  ${BOLD}%-18s${NC} ${DIM}%-6s${NC} ${DIM}%-22s${NC} " "$user" "$uid" "$shell"
+    printf "%b  %b\n" "$pw_display" "$key_display"
+
+    # Per-user warnings (collected, printed after table)
+    if [[ "$pw_status" == "none" ]]; then
+      any_no_password=true
+      printf "  ${BY}⚠${NC}  ${BOLD}%s${NC}: no password set — no emergency console access\n" "$user"
+      printf "     ${DIM}→ sudo passwd %s${NC}\n" "$user"
+      h_warn "$user: no password (no console fallback)"
+    fi
+
+    if (( key_count == 0 )) && [[ "$pw_auth_global" == "no" ]]; then
+      any_no_keys=true
+      printf "  ${BR}✗${NC}  ${BOLD}%s${NC}: no SSH keys + password auth disabled → ${BR}cannot login!${NC}\n" "$user"
+      h_fail "$user: no SSH keys and PasswordAuthentication=no (locked out)"
+    fi
+
+    if [[ "$pw_status" == "set" && "$pw_auth_global" == "yes" ]]; then
+      printf "  ${BY}⚠${NC}  ${BOLD}%s${NC}: has password + SSH password auth enabled — password login possible\n" "$user"
+      h_warn "$user: password login via SSH is possible"
+    fi
+
+  done < /etc/passwd
+
+  echo
+  # Summary line
+  if [[ "$any_no_password" == "false" && "$any_no_keys" == "false" ]]; then
+    printf "  ${BG}✔${NC}  All interactive users have SSH keys configured\n"
+    h_pass "All interactive users have SSH keys"
+  fi
+
+  # Note about locked passwords and console access
+  printf "  ${DIM}Note: 'locked' means SSH key login works, but no password for${NC}\n"
+  printf "  ${DIM}emergency console (KVM/VNC). Set one as a fallback: sudo passwd <user>${NC}\n"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
   detect_os
@@ -809,6 +900,7 @@ main() {
   check_storage
   check_network
   check_security
+  check_users
   check_services
   check_performance
   check_updates
