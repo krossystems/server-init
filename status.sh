@@ -180,8 +180,8 @@ check_storage() {
   df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null \
     | awk '{printf "  %s\n", $0}'
 
-  # Disk usage health checks (using numeric df)
-  while read -r _ _ _ _ pct_raw _ mount _; do
+  # Disk usage health checks — df -T columns: Filesystem Type 1K-blocks Used Available Use% Mounted
+  while read -r _ _ _ _ _ pct_raw mount; do
     local pct="${pct_raw//%/}"
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
     if   (( pct >= 90 )); then fail_line "Disk $mount at ${pct}%"; h_fail "Disk $mount is ${pct}% full"
@@ -189,14 +189,14 @@ check_storage() {
     fi
   done < <(df -T -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
 
-  # Inode health checks
-  while read -r _ _ _ _ pct_raw mount; do
+  # Inode health checks — df -i columns: Filesystem Type Inodes IUsed IFree IUse% Mounted
+  while read -r _ _ _ _ _ pct_raw mount; do
     local pct="${pct_raw//%/}"
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
     if   (( pct >= 90 )); then fail_line "Inodes $mount at ${pct}%"; h_fail "Inode exhaustion on $mount (${pct}%)"
     elif (( pct >= 80 )); then warn_line "Inodes $mount at ${pct}%"; h_warn "High inode usage on $mount (${pct}%)"
     fi
-  done < <(df -i -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
+  done < <(df -iT -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
 
   # Swap devices
   local swap_info; swap_info=$(swapon --show=NAME,TYPE,SIZE,USED,PRIO 2>/dev/null || true)
@@ -410,7 +410,9 @@ check_services() {
   # Print a service row; returns 0 if active
   svc_row() {
     local unit="$1" label="${2:-$1}"
-    local status; status=$(systemctl is-active "$unit" 2>/dev/null || echo "not-found")
+    local status
+    status=$(systemctl is-active "$unit" 2>/dev/null || true)
+    [[ -z "$status" ]] && status="not-found"
     local color
     case "$status" in
       active)   color="$GREEN" ;;
@@ -505,10 +507,11 @@ check_performance() {
   dim_line "Top 5 by memory:"
   ps axo user:12,pid,pcpu,pmem,comm --sort=-%mem 2>/dev/null | head -6 | awk '{printf "  %s\n", $0}'
 
-  # OOM events
+  # OOM events — use wc -l (always exits 0, no double-output risk)
   local oom=0
   oom=$(esudo journalctl -k --since boot 2>/dev/null \
-    | grep -cE "oom_kill_process|Out of memory" || echo 0)
+    | grep -E "oom_kill_process|Out of memory" | wc -l || true)
+  oom=${oom:-0}
   kv "OOM events:" "$oom since last boot"
   (( oom > 0 )) && { warn_line "OOM killer has fired $oom time(s) since boot"; h_warn "OOM: $oom kill event(s) since boot"; }
 
@@ -528,9 +531,10 @@ check_updates() {
   case "$PKG_MANAGER" in
     apt)
       dim_line "Checking cached package index (no network call)..."
-      local total sec
-      total=$(apt-get -q --dry-run upgrade 2>/dev/null | grep -c "^Inst" || echo 0)
-      sec=$(apt-get   -q --dry-run upgrade 2>/dev/null | grep "^Inst" | grep -ci security || echo 0)
+      local dry_run_out total sec
+      dry_run_out=$(apt-get -q --dry-run upgrade 2>/dev/null || true)
+      total=$(echo "$dry_run_out" | grep -c "^Inst" || true); total=${total:-0}
+      sec=$(echo "$dry_run_out"   | grep "^Inst" | grep -ci security || true); sec=${sec:-0}
       kv "Pending updates:"    "$total total  |  $sec security"
 
       if   (( sec   > 0  )); then fail_line "$sec security update(s) pending!"; h_fail "$sec pending security updates"
@@ -653,12 +657,16 @@ check_scheduled() {
   dim_line "/etc/cron.d entries:"
   ls /etc/cron.d/ 2>/dev/null | grep -v "^$" | awk '{printf "  %s\n", $0}' || dim_line "(empty or not accessible)"
 
-  # Systemd timers (upcoming)
+  # Systemd timers — buffer first to avoid SIGPIPE on head closing the pipe early
   echo
   dim_line "Next systemd timers:"
-  systemctl list-timers --no-pager 2>/dev/null \
-    | head -9 | awk 'NR>1{printf "  %s\n", $0}' \
-    || dim_line "(systemctl not available)"
+  local timer_out
+  timer_out=$(systemctl list-timers --no-pager 2>/dev/null || true)
+  if [[ -n "$timer_out" ]]; then
+    echo "$timer_out" | head -9 | awk 'NR>1{printf "  %s\n", $0}'
+  else
+    dim_line "(unavailable)"
+  fi
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
