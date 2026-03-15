@@ -490,12 +490,16 @@ print_summary() {
   echo "  ✔  fail2ban configured"
   echo "  ✔  Automatic security updates enabled"
   echo
-  echo -e "${YELLOW}${BOLD}Next steps:${NC}"
-  echo "  1. Open a NEW terminal and verify SSH access as '$NEW_USER':"
+  echo -e "${YELLOW}${BOLD}⚠  Required actions:${NC}"
+  echo "  1. Set a password for '$NEW_USER' (needed for VPS-console emergency access):"
+  echo -e "     ${BOLD}sudo passwd $NEW_USER${NC}"
+  echo "     SSH password login remains disabled — this is for console fallback only."
+  echo
+  echo "  2. Open a NEW terminal and verify SSH access as '$NEW_USER':"
   echo "     ssh ${NEW_USER}@<server-ip>"
   echo "     sudo whoami   # should print: root"
   echo
-  echo "  2. Once confirmed, you can continue using root or switch to '$NEW_USER'."
+  echo "  3. Once confirmed, you can close the root session."
   echo
 }
 

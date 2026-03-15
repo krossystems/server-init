@@ -822,7 +822,7 @@ check_users() {
     "User" "UID" "Shell" "Password" "SSH Keys"
   printf "  ${DIM}%s${NC}\n" "─────────────────────────────────────────────────────────────"
 
-  local any_no_password=false any_no_keys=false
+  local any_pw_issue=false any_no_keys=false
 
   # Iterate interactive users: root + UID >= 1000 with real shells
   while IFS=: read -r user _ uid _ _ home shell; do
@@ -840,7 +840,7 @@ check_users() {
     fi
     case "${pw_raw:-}" in
       P|PS)  pw_status="set";    pw_display="${BG}set${NC}" ;;
-      L|LK)  pw_status="locked"; pw_display="${DIM}locked${NC}" ;;
+      L|LK)  pw_status="locked"; pw_display="${BY}locked${NC}" ;;
       NP)    pw_status="none";   pw_display="${BY}none${NC}" ;;
       *)     pw_status="?";      pw_display="${DIM}?${NC}" ;;
     esac
@@ -860,10 +860,17 @@ check_users() {
 
     # Per-user warnings (collected, printed after table)
     if [[ "$pw_status" == "none" ]]; then
-      any_no_password=true
-      printf "  ${BY}⚠${NC}  ${BOLD}%s${NC}: no password set — no emergency console access\n" "$user"
+      any_pw_issue=true
+      printf "  ${BR}✗${NC}  ${BOLD}%s${NC}: no password set — set one for emergency console access\n" "$user"
       printf "     ${DIM}→ sudo passwd %s${NC}\n" "$user"
-      h_warn "$user: no password (no console fallback)"
+      h_fail "$user: no password set (no console fallback)"
+    fi
+
+    if [[ "$pw_status" == "locked" ]]; then
+      any_pw_issue=true
+      printf "  ${BY}⚠${NC}  ${BOLD}%s${NC}: password locked — no emergency console access\n" "$user"
+      printf "     ${DIM}→ sudo passwd %s${NC}\n" "$user"
+      h_warn "$user: password locked (no console fallback)"
     fi
 
     if (( key_count == 0 )) && [[ "$pw_auth_global" == "no" ]]; then
@@ -881,14 +888,10 @@ check_users() {
 
   echo
   # Summary line
-  if [[ "$any_no_password" == "false" && "$any_no_keys" == "false" ]]; then
-    printf "  ${BG}✔${NC}  All interactive users have SSH keys configured\n"
-    h_pass "All interactive users have SSH keys"
+  if [[ "$any_pw_issue" == "false" && "$any_no_keys" == "false" ]]; then
+    printf "  ${BG}✔${NC}  All interactive users have a password and SSH keys\n"
+    h_pass "All interactive users have a password and SSH keys"
   fi
-
-  # Note about locked passwords and console access
-  printf "  ${DIM}Note: 'locked' means SSH key login works, but no password for${NC}\n"
-  printf "  ${DIM}emergency console (KVM/VNC). Set one as a fallback: sudo passwd <user>${NC}\n"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
