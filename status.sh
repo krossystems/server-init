@@ -603,13 +603,22 @@ check_updates() {
                              h_warn "$total total updates pending"; }
 
       if [[ -f /var/run/reboot-required ]]; then
+        local running_kernel installed_kernel
+        running_kernel=$(uname -r)
+        installed_kernel=$(dpkg -l 'linux-image-*' 2>/dev/null \
+          | awk '/^ii/{print $3}' | grep -v "$running_kernel" \
+          | sort -V | tail -1 || echo "")
         printf "  ${BY}⚠  Reboot required${NC}"
-        [[ -f /var/run/reboot-required.pkgs ]] && \
+        if [[ -n "$installed_kernel" ]]; then
+          printf "  ${DIM}running:${NC} %s  ${DIM}→  pending:${NC} ${BY}%s${NC}" \
+            "$running_kernel" "$installed_kernel"
+        elif [[ -f /var/run/reboot-required.pkgs ]]; then
           printf "  ${DIM}(%s)${NC}" "$(tr '\n' ',' < /var/run/reboot-required.pkgs | sed 's/,$//')"
+        fi
         printf "\n"
-        h_warn "Reboot required"
+        h_warn "Reboot required (running: ${running_kernel})"
       else
-        printf "  ${BG}✔${NC}  No reboot required\n"
+        printf "  ${BG}✔${NC}  No reboot required  ${DIM}(kernel: $(uname -r))${NC}\n"
         h_pass "No reboot required"
       fi
 
