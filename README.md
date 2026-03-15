@@ -80,7 +80,7 @@ NEW_USER=alice bash init.sh
 
 ## Manual steps you may still want
 
-- **Set a password** for emergency console access:
+- **Set a password** for emergency VPS-console access (SSH password login is disabled, but a password lets you log in via your provider's web console if you lose your key):
   ```bash
   sudo passwd alice
   ```

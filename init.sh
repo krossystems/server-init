@@ -147,8 +147,10 @@ step_install_essentials() {
 step_create_user() {
   section "Creating user: $NEW_USER"
 
+  local user_existed=false
   if id "$NEW_USER" &>/dev/null; then
     warn "User '$NEW_USER' already exists. Skipping creation."
+    user_existed=true
   else
     useradd -m -s /bin/bash "$NEW_USER"
     log "User '$NEW_USER' created."
@@ -174,9 +176,11 @@ step_create_user() {
   chmod 440 "$sudoers_file"
   log "Passwordless sudo configured for '$NEW_USER' ($sudoers_file)."
 
-  # Lock password — SSH key login only
-  passwd -l "$NEW_USER" &>/dev/null || true
-  log "Password locked for '$NEW_USER' (SSH key login only)."
+  # No password is set on a fresh account (SSH key login only via sshd config).
+  # Set one manually for emergency VPS-console access: sudo passwd $NEW_USER
+  if [[ "$user_existed" == "false" ]]; then
+    log "No password set for '$NEW_USER'. Set one later for emergency console access: sudo passwd $NEW_USER"
+  fi
 }
 
 # ── Step 4: Copy SSH authorized keys ─────────────────────────────────────────
@@ -216,6 +220,13 @@ step_copy_ssh_keys() {
   local dest_keys="${dest_dir}/authorized_keys"
 
   install -d -m 700 -o "$NEW_USER" -g "$NEW_USER" "$dest_dir"
+
+  if [[ -f "$dest_keys" && -s "$dest_keys" ]]; then
+    log "authorized_keys already exist for '$NEW_USER' — skipping copy to preserve existing keys."
+    ssh-keygen -lf "$dest_keys" 2>/dev/null | sed 's/^/  /' || true
+    return
+  fi
+
   install -m 600 -o "$NEW_USER" -g "$NEW_USER" "$src_keys" "$dest_keys"
   log "SSH authorized_keys copied to $dest_keys"
 }
