@@ -6,9 +6,8 @@
 #   1. Installs mosh and JetBrains Mono font via Homebrew
 #   2. Deploys Ghostty terminal configuration
 #   3. Creates ~/.ssh/sockets/ directory
-#   4. Generates an Ed25519 SSH key (if none exists)
-#   5. Creates ~/bin/dev quick-connect command
-#   6. Prints next steps (SSH config, ssh-copy-id)
+#   4. Creates ~/bin/dev quick-connect command
+#   5. Prints next steps (SSH config, ssh-copy-id)
 #
 # Usage (either way works):
 #   curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/client/mac-setup.sh | bash
@@ -96,16 +95,7 @@ mkdir -p "$HOME/.ssh/sockets"
 chmod 700 "$HOME/.ssh" "$HOME/.ssh/sockets" 2>/dev/null || true
 log "Created ~/.ssh/sockets/ for ControlMaster."
 
-# ── Step 4: Generate SSH key ────────────────────────────────────────────────
-if [[ ! -f "$HOME/.ssh/id_ed25519" ]]; then
-  log "Generating Ed25519 SSH key..."
-  ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N "" -C "$(whoami)@$(hostname)"
-  log "SSH key generated: ~/.ssh/id_ed25519"
-else
-  log "Ed25519 SSH key already exists."
-fi
-
-# ── Step 5: Create ~/bin/dev quick-connect command ───────────────────────────
+# ── Step 4: Create ~/bin/dev quick-connect command ───────────────────────────
 section "Creating ~/bin/dev command"
 
 mkdir -p "$HOME/bin"
@@ -135,7 +125,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/bin"; then
   warn "  export PATH=\"\$HOME/bin:\$PATH\""
 fi
 
-# ── Step 6: Deploy SSH config snippet ────────────────────────────────────────
+# ── Step 5: Deploy SSH config snippet ────────────────────────────────────────
 section "SSH config snippet"
 
 ssh_config="$HOME/.ssh/config"
@@ -163,7 +153,6 @@ echo "  ✔  mosh installed"
 echo "  ✔  JetBrains Mono font installed"
 echo "  ✔  Ghostty config deployed"
 echo "  ✔  SSH sockets directory created"
-echo "  ✔  SSH key ready"
 echo "  ✔  ~/bin/dev quick-connect command created"
 echo
 echo -e "${YELLOW}${BOLD}Next steps:${NC}"
