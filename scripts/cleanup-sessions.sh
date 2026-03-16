@@ -6,8 +6,8 @@
 #
 # Rules:
 #   - "main" is never cleaned up
-#   - "tmp-*" sessions unattached for > 24 hours → killed
-#   - Other sessions unattached for > 72 hours → killed
+#   - "tmp-*" sessions unattached for > 7 days → killed
+#   - Other sessions unattached for > 30 days → killed
 # ==============================================================================
 
 set -uo pipefail
@@ -38,18 +38,18 @@ while IFS= read -r line; do
   last_active="$activity_epoch"
   (( created_epoch > last_active )) && last_active="$created_epoch"
 
-  age_hours=$(( (NOW - last_active) / 3600 ))
+  age_days=$(( (NOW - last_active) / 86400 ))
 
-  # tmp-* sessions: 24h threshold
-  if [[ "$session_name" == tmp-* ]] && (( age_hours >= 24 )); then
-    echo "[cleanup] Killing tmp session '$session_name' (idle ${age_hours}h)"
+  # tmp-* sessions: 7 day threshold
+  if [[ "$session_name" == tmp-* ]] && (( age_days >= 7 )); then
+    echo "[cleanup] Killing tmp session '$session_name' (idle ${age_days}d)"
     tmux kill-session -t "$session_name" 2>/dev/null && (( KILLED++ ))
     continue
   fi
 
-  # Regular sessions: 72h threshold
-  if (( age_hours >= 72 )); then
-    echo "[cleanup] Killing session '$session_name' (idle ${age_hours}h)"
+  # Regular sessions: 30 day threshold
+  if (( age_days >= 30 )); then
+    echo "[cleanup] Killing session '$session_name' (idle ${age_days}d)"
     tmux kill-session -t "$session_name" 2>/dev/null && (( KILLED++ ))
   fi
 

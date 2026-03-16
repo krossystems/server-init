@@ -369,21 +369,29 @@ step_setup_claude_code() {
 
   local user_home="/home/${NEW_USER}"
 
-  # 6a — Install Node.js via nvm and Claude Code
-  if ! su - "$NEW_USER" -c 'command -v claude' &>/dev/null; then
-    log "Installing Node.js (nvm) and Claude Code..."
-    su - "$NEW_USER" -c 'bash -c "
-      export NVM_DIR=\"\$HOME/.nvm\"
-      if [ ! -d \"\$NVM_DIR\" ]; then
-        curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-      fi
-      . \"\$NVM_DIR/nvm.sh\"
-      nvm install --lts
-      npm install -g @anthropic-ai/claude-code
-    "'
-    log "Claude Code installed."
-  else
+  # 6a — Ensure Node.js and Claude Code are available
+  if su - "$NEW_USER" -c 'command -v claude' &>/dev/null; then
     log "Claude Code already installed."
+  else
+    # Need Node.js first — prefer system node, fall back to nvm
+    if ! su - "$NEW_USER" -c 'command -v node' &>/dev/null; then
+      log "Node.js not found — installing via nvm..."
+      su - "$NEW_USER" -c 'bash -c "
+        export NVM_DIR=\"\$HOME/.nvm\"
+        if [ ! -d \"\$NVM_DIR\" ]; then
+          curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+        fi
+        . \"\$NVM_DIR/nvm.sh\"
+        nvm install --lts
+      "'
+      log "Node.js installed via nvm."
+    else
+      log "Node.js already available: $(su - "$NEW_USER" -c 'node --version' 2>/dev/null)"
+    fi
+
+    log "Installing Claude Code..."
+    su - "$NEW_USER" -c 'npm install -g @anthropic-ai/claude-code'
+    log "Claude Code installed."
   fi
 
   # 6b — Deploy tmux.conf
@@ -397,10 +405,22 @@ step_setup_claude_code() {
     "${user_home}/.claude/hooks/clear-bell.sh" "$NEW_USER" 755
   log "Deployed Claude Code hook scripts."
 
-  # 6d — Deploy Claude Code settings.json
+  # 6d — Deploy Claude Code settings.json (merge hooks if file already exists)
   local settings_dest="${user_home}/.claude/settings.json"
+  install -d -o "$NEW_USER" -g "$NEW_USER" "$(dirname "$settings_dest")"
   if [[ -f "$settings_dest" ]]; then
-    log "Claude Code settings.json already exists — skipping (manual merge may be needed)."
+    # File exists — check if hooks are already configured
+    if jq -e '.hooks.Stop' "$settings_dest" &>/dev/null; then
+      log "Claude Code settings.json already has hooks configured."
+    else
+      # Merge hooks into existing settings
+      local hooks_json
+      hooks_json=$(get_config_file "configs/claude-settings.json")
+      jq -s '.[0] * .[1]' "$settings_dest" <(echo "$hooks_json") > "${settings_dest}.tmp"
+      mv "${settings_dest}.tmp" "$settings_dest"
+      chown "$NEW_USER:$NEW_USER" "$settings_dest"
+      log "Merged hooks into existing ~/.claude/settings.json"
+    fi
   else
     deploy_config "configs/claude-settings.json" "$settings_dest" "$NEW_USER" 644
     log "Deployed ~/.claude/settings.json"
@@ -425,7 +445,7 @@ step_setup_claude_code() {
     log "Cleanup cron job already exists."
   fi
 
-  # 6g — Configure shell environment (PATH, locale, nvm)
+  # 6g — Configure shell environment (PATH, locale, and nvm if installed)
   local profile="${user_home}/.bashrc"
   local marker="# --- server-init: claude-code environment ---"
   if ! grep -qF "$marker" "$profile" 2>/dev/null; then
@@ -435,12 +455,17 @@ $marker
 export PATH="\$HOME/bin:\$PATH"
 export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
+EOF
+    # Only add nvm sourcing if nvm was actually installed
+    if [[ -d "${user_home}/.nvm" ]]; then
+      cat >> "$profile" <<'EOF'
 
 # nvm
-export NVM_DIR="\$HOME/.nvm"
-[ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
-[ -s "\$NVM_DIR/bash_completion" ] && . "\$NVM_DIR/bash_completion"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
 EOF
+    fi
     chown "$NEW_USER:$NEW_USER" "$profile"
     log "Configured shell environment in ~/.bashrc"
   else
@@ -706,20 +731,41 @@ print_summary() {
   # ── Dynamic action items (only show what's actually needed) ──
   local action_num=0 has_header=false
   local caller="${SUDO_USER:-root}"
+  local any_pw_missing=false
 
-  # 1) Password check — only prompt if not already set
-  local pw_status
-  pw_status=$(passwd -S "$NEW_USER" 2>/dev/null | awk '{print $2}' || echo "")
-  if [[ "$pw_status" != "P" && "$pw_status" != "PS" ]]; then
-    if [[ "$has_header" == "false" ]]; then
-      echo -e "${YELLOW}${BOLD}Action required:${NC}"
-      has_header=true
-    fi
-    (( ++action_num ))
-    echo "  ${action_num}. Set a password for '$NEW_USER' (for emergency VPS-console access):"
-    echo -e "     ${BOLD}sudo passwd $NEW_USER${NC}"
-    echo "     SSH password login remains disabled — this is for console fallback only."
+  # 1) Password checks — both root AND $NEW_USER
+  #    VPS console is the ONLY way in if you lose SSH keys. Both accounts need passwords.
+  local root_pw user_pw
+  root_pw=$(passwd -S root 2>/dev/null | awk '{print $2}' || echo "")
+  user_pw=$(passwd -S "$NEW_USER" 2>/dev/null | awk '{print $2}' || echo "")
+
+  if [[ "$root_pw" != "P" && "$root_pw" != "PS" ]] || \
+     [[ "$user_pw" != "P" && "$user_pw" != "PS" ]]; then
+    echo -e "${RED}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}${BOLD}║  ⚠  IMPORTANT: Set console passwords NOW!           ║${NC}"
+    echo -e "${RED}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
     echo
+    echo "  SSH password login is disabled. If you lose your SSH key, the VPS"
+    echo "  provider's web console is your ONLY way back in. Without a password,"
+    echo "  you will be permanently locked out."
+    echo
+    has_header=true
+  fi
+
+  if [[ "$root_pw" != "P" && "$root_pw" != "PS" ]]; then
+    (( ++action_num ))
+    echo -e "  ${RED}${action_num}.${NC} Set a password for ${BOLD}root${NC}:"
+    echo -e "     ${BOLD}sudo passwd root${NC}"
+    echo
+    any_pw_missing=true
+  fi
+
+  if [[ "$user_pw" != "P" && "$user_pw" != "PS" ]]; then
+    (( ++action_num ))
+    echo -e "  ${RED}${action_num}.${NC} Set a password for ${BOLD}${NEW_USER}${NC}:"
+    echo -e "     ${BOLD}sudo passwd $NEW_USER${NC}"
+    echo
+    any_pw_missing=true
   fi
 
   # 2) SSH verification — only if caller is not already the target user

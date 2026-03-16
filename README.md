@@ -75,11 +75,11 @@ curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/init.s
 
 ### Mac client setup
 
-Clone the repo, then run:
-
 ```bash
-bash client/mac-setup.sh
+curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/client/mac-setup.sh | bash
 ```
+
+Or from a local clone: `bash client/mac-setup.sh`
 
 This installs Mosh, JetBrains Mono font, deploys Ghostty config, creates an SSH key, and sets up the `dev` quick-connect command.
 
@@ -165,8 +165,8 @@ A cron job runs every 6 hours and removes stale Tmux sessions:
 | Session type | Threshold |
 |---|---|
 | `main` | Never cleaned up |
-| `tmp-*` | Killed after 24h unattached |
-| Other | Killed after 72h unattached |
+| `tmp-*` | Killed after 7 days unattached |
+| Other | Killed after 30 days unattached |
 
 ## Supported distributions
 

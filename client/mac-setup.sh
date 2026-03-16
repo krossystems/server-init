@@ -10,8 +10,9 @@
 #   5. Creates ~/bin/dev quick-connect command
 #   6. Prints next steps (SSH config, ssh-copy-id)
 #
-# Usage:
-#   bash mac-setup.sh
+# Usage (either way works):
+#   curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/client/mac-setup.sh | bash
+#   bash mac-setup.sh          # from a local clone
 # ==============================================================================
 
 set -euo pipefail
@@ -25,8 +26,25 @@ error()   { echo -e "${RED}[✗]${NC} $*" >&2; }
 section() { echo -e "\n${CYAN}${BOLD}── $* ──────────────────────────────────${NC}"; }
 die()     { error "$*"; exit 1; }
 
-# Resolve script directory for config file lookup
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# GitHub raw base URL (used when running via curl | bash)
+GITHUB_RAW="https://raw.githubusercontent.com/krossystems/server-init/main"
+
+# Resolve script directory for local file lookup
+if [[ -f "$0" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+
+# Fetch a file from local clone or GitHub
+get_file() {
+  local relpath="$1"
+  if [[ -n "$SCRIPT_DIR" && -f "${SCRIPT_DIR}/${relpath}" ]]; then
+    cat "${SCRIPT_DIR}/${relpath}"
+  else
+    curl -fsSL "${GITHUB_RAW}/client/${relpath}"
+  fi
+}
 
 echo
 echo -e "${BOLD}mac-setup${NC} — Configuring this Mac for remote development"
@@ -57,13 +75,8 @@ fi
 # ── Step 2: Deploy Ghostty config ───────────────────────────────────────────
 section "Deploying Ghostty configuration"
 
-local_config="${SCRIPT_DIR}/ghostty-config"
 dest_dir="$HOME/.config/ghostty"
 dest_file="${dest_dir}/config"
-
-if [[ ! -f "$local_config" ]]; then
-  die "ghostty-config not found at $local_config. Run this script from the client/ directory."
-fi
 
 mkdir -p "$dest_dir"
 
@@ -73,7 +86,7 @@ if [[ -f "$dest_file" ]]; then
   warn "Existing Ghostty config backed up to: $backup"
 fi
 
-cp "$local_config" "$dest_file"
+get_file "ghostty-config" > "$dest_file"
 log "Ghostty config deployed to $dest_file"
 
 # ── Step 3: SSH sockets directory ────────────────────────────────────────────
@@ -122,6 +135,23 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/bin"; then
   warn "  export PATH=\"\$HOME/bin:\$PATH\""
 fi
 
+# ── Step 6: Deploy SSH config snippet ────────────────────────────────────────
+section "SSH config snippet"
+
+ssh_config="$HOME/.ssh/config"
+if [[ -f "$ssh_config" ]] && grep -q "ControlMaster" "$ssh_config"; then
+  log "SSH config already has ControlMaster — skipping."
+else
+  echo
+  echo "  Add the following to ~/.ssh/config (edit the Host dev section):"
+  echo
+  get_file "ssh-config-snippet" | sed 's/^/    /'
+  echo
+  warn "Not applied automatically — review and add manually:"
+  warn "  Append:  curl -fsSL ${GITHUB_RAW}/client/ssh-config-snippet >> ~/.ssh/config"
+  warn "  Then edit YOUR_SERVER_IP and YOUR_USERNAME."
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo
 echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
@@ -138,9 +168,8 @@ echo "  ✔  ~/bin/dev quick-connect command created"
 echo
 echo -e "${YELLOW}${BOLD}Next steps:${NC}"
 echo
-echo "  1. Add the SSH config snippet to ~/.ssh/config:"
-echo -e "     ${BOLD}cat ${SCRIPT_DIR}/ssh-config-snippet >> ~/.ssh/config${NC}"
-echo "     Then edit it to set YOUR_SERVER_IP and YOUR_USERNAME."
+echo "  1. Add SSH config (if not done above):"
+echo -e "     Edit ${BOLD}~/.ssh/config${NC} — set YOUR_SERVER_IP and YOUR_USERNAME."
 echo
 echo "  2. Copy your SSH key to the server:"
 echo -e "     ${BOLD}ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USERNAME@YOUR_SERVER_IP${NC}"
