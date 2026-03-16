@@ -332,10 +332,16 @@ get_config_file() {
 }
 
 # Deploy a config file to a target path owned by a specific user.
+# If the destination already exists, backs it up (.bak) before overwriting.
 # Usage: deploy_config <relative-path> <dest-path> <owner> <mode>
 deploy_config() {
   local relpath="$1" dest="$2" owner="$3" mode="${4:-644}"
   install -d -o "$owner" -g "$owner" "$(dirname "$dest")"
+  if [[ -f "$dest" ]]; then
+    cp "$dest" "${dest}.bak"
+    chown "$owner:$owner" "${dest}.bak"
+    log "Backed up existing ${dest} → ${dest}.bak"
+  fi
   get_config_file "$relpath" > "$dest"
   chown "$owner:$owner" "$dest"
   chmod "$mode" "$dest"
