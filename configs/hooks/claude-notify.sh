@@ -68,6 +68,8 @@ printf '\a'
 # Strip any existing marker first, then add the new one
 clean_name="${my_window_name#🟢}"
 clean_name="${clean_name#🔔}"
+clean_name="${clean_name#⏳}"
+clean_name="${clean_name#⌛}"
 if [[ -n "$clean_name" ]]; then
   tmux rename-window -t "$my_window_id" "${marker}${clean_name}" 2>/dev/null || true
 fi

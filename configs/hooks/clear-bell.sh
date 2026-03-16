@@ -16,6 +16,8 @@ window_name="${2:-}"
 clean_name="$window_name"
 clean_name="${clean_name#🟢}"
 clean_name="${clean_name#🔔}"
+clean_name="${clean_name#⏳}"
+clean_name="${clean_name#⌛}"
 
 if [[ "$clean_name" != "$window_name" ]]; then
   tmux rename-window -t "$window_id" "$clean_name" 2>/dev/null || true
