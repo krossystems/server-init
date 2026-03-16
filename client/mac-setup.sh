@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# mac-setup.sh — Configure a Mac as a client for the remote dev server
+# mac-setup.sh — Configure a Mac as a client for Mosh + Tmux remote development
 #
 # What it does:
 #   1. Installs mosh and JetBrains Mono font via Homebrew
 #   2. Deploys Ghostty terminal configuration
-#   3. Creates ~/.ssh/sockets/ directory
-#   4. Creates ~/bin/dev quick-connect command
-#   5. Prints next steps (SSH config, ssh-copy-id)
+#   3. Creates ~/.ssh/sockets/ directory for ControlMaster
 #
 # Usage (either way works):
 #   curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/client/mac-setup.sh | bash
@@ -95,53 +93,6 @@ mkdir -p "$HOME/.ssh/sockets"
 chmod 700 "$HOME/.ssh" "$HOME/.ssh/sockets" 2>/dev/null || true
 log "Created ~/.ssh/sockets/ for ControlMaster."
 
-# ── Step 4: Create ~/bin/dev quick-connect command ───────────────────────────
-section "Creating ~/bin/dev command"
-
-mkdir -p "$HOME/bin"
-cat > "$HOME/bin/dev" <<'DEVEOF'
-#!/usr/bin/env bash
-# Quick connect to dev server via Mosh, auto-attach to Tmux "main" session.
-#
-# Usage:
-#   dev              → connect to default host "dev" (from ~/.ssh/config)
-#   dev myserver     → connect to "myserver"
-
-set -euo pipefail
-
-host="${1:-dev}"
-
-# Mosh into the server, then attach or create the "main" Tmux session.
-# tmux new -A -s main: attach if exists, otherwise create.
-mosh "$host" -- tmux new-session -A -s main
-DEVEOF
-
-chmod +x "$HOME/bin/dev"
-log "Created ~/bin/dev"
-
-# Check if ~/bin is in PATH
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/bin"; then
-  warn "~/bin is not in your PATH. Add this to your shell profile:"
-  warn "  export PATH=\"\$HOME/bin:\$PATH\""
-fi
-
-# ── Step 5: Deploy SSH config snippet ────────────────────────────────────────
-section "SSH config snippet"
-
-ssh_config="$HOME/.ssh/config"
-if [[ -f "$ssh_config" ]] && grep -q "ControlMaster" "$ssh_config"; then
-  log "SSH config already has ControlMaster — skipping."
-else
-  echo
-  echo "  Add the following to ~/.ssh/config (edit the Host dev section):"
-  echo
-  get_file "ssh-config-snippet" | sed 's/^/    /'
-  echo
-  warn "Not applied automatically — review and add manually:"
-  warn "  Append:  curl -fsSL ${GITHUB_RAW}/client/ssh-config-snippet >> ~/.ssh/config"
-  warn "  Then edit YOUR_SERVER_IP and YOUR_USERNAME."
-fi
-
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo
 echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
@@ -151,20 +102,11 @@ echo
 echo -e "${BOLD}What was done:${NC}"
 echo "  ✔  mosh installed"
 echo "  ✔  JetBrains Mono font installed"
-echo "  ✔  Ghostty config deployed"
-echo "  ✔  SSH sockets directory created"
-echo "  ✔  ~/bin/dev quick-connect command created"
+echo "  ✔  Ghostty config deployed to ~/.config/ghostty/config"
+echo "  ✔  SSH sockets directory created at ~/.ssh/sockets/"
 echo
-echo -e "${YELLOW}${BOLD}Next steps:${NC}"
+echo -e "${BOLD}Connect to a server:${NC}"
+echo -e "  ${BOLD}mosh myhost -- tmux new-session -A -s main${NC}"
 echo
-echo "  1. Add SSH config (if not done above):"
-echo -e "     Edit ${BOLD}~/.ssh/config${NC} — set YOUR_SERVER_IP and YOUR_USERNAME."
-echo
-echo "  2. Copy your SSH key to the server:"
-echo -e "     ${BOLD}ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USERNAME@YOUR_SERVER_IP${NC}"
-echo
-echo "  3. Connect:"
-echo -e "     ${BOLD}dev${NC}"
-echo
-echo "  4. If using Ghostty, restart it to apply the new config."
+echo "  If using Ghostty, restart it to apply the new config."
 echo

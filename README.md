@@ -8,7 +8,7 @@ A single-script bootstrap for fresh Linux servers. Run it once as root and get a
  ┌─────────────────┐         ┌──────────────────────────────────────────────┐
  │  Mac (Ghostty)  │  Mosh   │  Ubuntu Server                              │
  │                 │ ──UDP──▸│  Tmux session "main"                        │
- │  ~/bin/dev      │         │  ┌────────┬────────┬────────┬────────┐      │
+ │                 │         │  ┌────────┬────────┬────────┬────────┐      │
  │                 │         │  │ 1:auth │ 2:pay  │ 3:api  │ 4:dash │ ... │
  │                 │         │  │ claude │ claude │ claude │ claude │      │
  └─────────────────┘         │  └────────┴────────┴────────┴────────┘      │
@@ -81,17 +81,21 @@ curl -fsSL https://raw.githubusercontent.com/krossystems/server-init/main/client
 
 Or from a local clone: `bash client/mac-setup.sh`
 
-This installs Mosh, JetBrains Mono font, deploys Ghostty config, creates an SSH key, and sets up the `dev` quick-connect command.
+This installs Mosh, JetBrains Mono font, and deploys Ghostty config. You manage your own `~/.ssh/config` and keys.
 
-### Phone (iOS)
+### Connecting
 
-Install [Blink Shell](https://blink.sh) or Moshi, configure a Mosh connection to your server, then:
+```bash
+mosh myhost -- tmux new-session -A -s main
+```
+
+Replace `myhost` with any host from your `~/.ssh/config`. This connects via Mosh and attaches to the Tmux "main" session.
+
+From iPhone (Blink Shell / Moshi), same command after Mosh connects:
 
 ```bash
 tmux new-session -A -s main
 ```
-
-This attaches to the same session your Mac is using — seamless handoff.
 
 ## Options
 
@@ -115,8 +119,8 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 
 | Command | What it does |
 |---------|-------------|
-| `dev` | Connect from Mac via Mosh, attach to Tmux "main" |
-| `work` | Attach/create "main" session |
+| `mosh myhost -- tmux new-session -A -s main` | Connect via Mosh, attach to Tmux "main" |
+| `work` | Attach/create "main" session (once inside the server) |
 | `work alpha` | Attach/create "alpha" session |
 | `work -l` | List all sessions |
 | `work -k alpha` | Kill "alpha" session |
@@ -247,9 +251,9 @@ server-init/
 │   ├── work                        ← Tmux session manager
 │   └── cleanup-sessions.sh         ← Stale session cleanup (cron)
 ├── client/
-│   ├── mac-setup.sh                ← Mac client one-click setup
+│   ├── mac-setup.sh                ← Mac client setup (mosh, Ghostty, SSH sockets)
 │   ├── ghostty-config              ← Ghostty terminal config
-│   └── ssh-config-snippet          ← SSH config reference
+│   └── ssh-config-snippet          ← SSH ControlMaster / keepalive reference
 ├── README.md
 └── LICENSE
 ```
