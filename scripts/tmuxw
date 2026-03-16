@@ -34,16 +34,20 @@ list_windows() {
   tmux list-windows -F "  #{?window_active,${GREEN}▸${NC},${DIM} ${NC}} #I: #{window_name}  ${DIM}#{pane_current_path}${NC}" 2>/dev/null
 }
 
-# List windows needing attention (🔔)
+# List windows needing attention (✅ completed, ❓ needs input)
 list_alerts() {
-  local bells
-  bells=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null | grep '🔔' || true)
-  if [[ -z "$bells" ]]; then
+  local marked
+  marked=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null | grep -E '✅|❓' || true)
+  if [[ -z "$marked" ]]; then
     echo -e "${GREEN}No windows need attention.${NC}"
   else
-    echo -e "${YELLOW}${BOLD}Windows needing attention:${NC}"
-    echo "$bells" | while IFS= read -r line; do
-      echo -e "  ${YELLOW}🔔${NC} $line"
+    echo -e "${BOLD}Windows with notifications:${NC}"
+    echo "$marked" | while IFS= read -r line; do
+      if echo "$line" | grep -q '❓'; then
+        echo -e "  ${RED}❓${NC} $line  ${RED}(needs input)${NC}"
+      else
+        echo -e "  ${GREEN}✅${NC} $line  ${DIM}(completed)${NC}"
+      fi
     done
   fi
 }
@@ -51,17 +55,17 @@ list_alerts() {
 # Find window by fuzzy name match → prints window index or empty
 find_window() {
   local pattern="$1"
-  # Exact match first (ignoring 🔔 prefix)
+  # Exact match first (ignoring ✅/❓ prefix)
   local match
   match=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null \
-    | sed 's/🔔//' | grep -i "^[0-9]*:${pattern}$" | head -1 | cut -d: -f1)
+    | sed 's/[✅❓]//' | grep -i "^[0-9]*:${pattern}$" | head -1 | cut -d: -f1)
   if [[ -n "$match" ]]; then
     echo "$match"
     return
   fi
   # Substring match
   match=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null \
-    | sed 's/🔔//' | grep -i "${pattern}" | head -1 | cut -d: -f1)
+    | sed 's/[✅❓]//' | grep -i "${pattern}" | head -1 | cut -d: -f1)
   echo "$match"
 }
 

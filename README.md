@@ -153,15 +153,22 @@ Prefix is `Ctrl+A`. Most navigation works without prefix.
 
 ## Notification system
 
-When Claude Code finishes a task (Stop hook) or needs input (Notification hook):
+When Claude Code finishes a task or needs input, background windows are marked:
+
+| Event | Marker | Meaning |
+|---|---|---|
+| Stop | ✅ | Task completed, review when convenient |
+| Notification | ❓ | Needs your input/decision |
+
+For each event:
 
 1. **Tmux bell** — the background window turns yellow in the status bar
-2. **🔔 prefix** — added to the window name for visibility
-3. **OS notification** — sent via OSC 777/9 passthrough to Ghostty
+2. **Marker prefix** (✅ or ❓) — added to the window name
+3. **OS notification** — sent via OSC passthrough to Ghostty (shows marker in title)
 
-The 🔔 prefix is automatically cleared when you switch to that window (via `pane-focus-in` hook).
+Markers are automatically cleared when you switch to that window.
 
-Use `cc -a` to list all windows currently needing attention.
+Use `tmuxw -a` to list all marked windows at a glance.
 
 ## Session cleanup
 
