@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# work — Tmux session manager
+# tmuxs — Tmux session manager
 #
 # Usage:
-#   work [name] [workdir]  Attach/create a Tmux session
-#   work -l                List all sessions
-#   work -k <name>         Kill a session
-#   work -K                Kill all unattached sessions (except "main")
-#   work                   Attach/create "main" session
+#   tmuxs [name] [workdir]  Attach/create a Tmux session
+#   tmuxs -l                List all sessions
+#   tmuxs -k <name>         Kill a session
+#   tmuxs -K                Kill all unattached sessions (except "main")
+#   tmuxs                   Attach/create "main" session
 #
 # If already inside Tmux, switches client to the target session.
 # If outside Tmux, attaches with -d (detaches other clients for seamless
 # cross-device handoff).
 #
 # Examples:
-#   work              → resume or create "main"
-#   work alpha        → resume or create "alpha"
-#   work alpha ~/code → create "alpha" in ~/code
+#   tmuxs              → resume or create "main"
+#   tmuxs alpha        → resume or create "alpha"
+#   tmuxs alpha ~/code → create "alpha" in ~/code
 # ==============================================================================
 
 set -uo pipefail
@@ -79,12 +79,12 @@ kill_unattached() {
 case "${1:-}" in
   -l) list_sessions; exit 0 ;;
   -k)
-    [[ -z "${2:-}" ]] && die "Usage: work -k <session-name>"
+    [[ -z "${2:-}" ]] && die "Usage: tmuxs -k <session-name>"
     kill_session "$2"; exit 0
     ;;
   -K) kill_unattached; exit 0 ;;
   -h|--help)
-    echo "Usage: work [name] [workdir] | work -l | work -k <name> | work -K"
+    echo "Usage: tmuxs [name] [workdir] | tmuxs -l | tmuxs -k <name> | tmuxs -K"
     exit 0
     ;;
 esac

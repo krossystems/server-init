@@ -426,11 +426,11 @@ step_setup_claude_code() {
     log "Deployed ~/.claude/settings.json"
   fi
 
-  # 6e — Deploy helper scripts (cc, work)
+  # 6e — Deploy helper scripts (tmuxs, tmuxw)
   install -d -o "$NEW_USER" -g "$NEW_USER" "${user_home}/bin"
-  deploy_config "scripts/cc"   "${user_home}/bin/cc"   "$NEW_USER" 755
-  deploy_config "scripts/work" "${user_home}/bin/work" "$NEW_USER" 755
-  log "Deployed ~/bin/cc and ~/bin/work"
+  deploy_config "scripts/tmuxs" "${user_home}/bin/tmuxs" "$NEW_USER" 755
+  deploy_config "scripts/tmuxw" "${user_home}/bin/tmuxw" "$NEW_USER" 755
+  log "Deployed ~/bin/tmuxs and ~/bin/tmuxw"
 
   # 6f — Deploy cleanup-sessions.sh and cron job
   deploy_config "scripts/cleanup-sessions.sh" \

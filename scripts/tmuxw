@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# cc — Claude Code instance manager for Tmux
+# tmuxw — Tmux window manager
 #
 # Usage:
-#   cc [name] [workdir]    Launch Claude Code in a named Tmux window
-#   cc -l                  List all windows in the current session
-#   cc -a                  List windows with 🔔 (needs attention)
-#   cc -g <name>           Go to (jump to) a window by name (fuzzy match)
-#   cc -x <name>           Close a window by name (fuzzy match)
-#   cc                     Launch with default name "claude"
+#   tmuxw [name] [workdir]   Create a named window (or jump to it if exists)
+#   tmuxw -l                 List all windows in the current session
+#   tmuxw -a                 List windows with 🔔 (needs attention)
+#   tmuxw -g <name>          Go to (jump to) a window by name (fuzzy match)
+#   tmuxw -x <name>          Close a window by name (fuzzy match)
+#   tmuxw                    Create window named "shell"
 #
 # Examples:
-#   cc auth                → new window "auth" running claude
-#   cc payment ~/pay       → new window "payment" in ~/pay directory
-#   cc -g auth             → jump to the "auth" window
+#   tmuxw auth               → new window "auth"
+#   tmuxw payment ~/pay      → new window "payment" in ~/pay directory
+#   tmuxw -g auth            → jump to the "auth" window
 # ==============================================================================
 
 set -uo pipefail
@@ -24,7 +24,7 @@ BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 die() { echo -e "${RED}[!]${NC} $*" >&2; exit 1; }
 
 # Must be inside Tmux
-[[ -z "${TMUX:-}" ]] && die "Not inside Tmux. Run 'work' first to start a session."
+[[ -z "${TMUX:-}" ]] && die "Not inside Tmux. Run 'tmuxs' first to start a session."
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ goto_window() {
   local idx
   idx=$(find_window "$name")
   if [[ -z "$idx" ]]; then
-    die "No window matching '$name'. Use 'cc -l' to list."
+    die "No window matching '$name'. Use 'tmuxw -l' to list."
   fi
   tmux select-window -t ":$idx"
 }
@@ -82,7 +82,7 @@ close_window() {
   local idx
   idx=$(find_window "$name")
   if [[ -z "$idx" ]]; then
-    die "No window matching '$name'. Use 'cc -l' to list."
+    die "No window matching '$name'. Use 'tmuxw -l' to list."
   fi
   local wname
   wname=$(tmux list-windows -F '#{window_index}:#{window_name}' | grep "^${idx}:" | cut -d: -f2-)
@@ -96,22 +96,22 @@ case "${1:-}" in
   -l) list_windows; exit 0 ;;
   -a) list_alerts;  exit 0 ;;
   -g)
-    [[ -z "${2:-}" ]] && die "Usage: cc -g <name>"
+    [[ -z "${2:-}" ]] && die "Usage: tmuxw -g <name>"
     goto_window "$2"; exit 0
     ;;
   -x)
-    [[ -z "${2:-}" ]] && die "Usage: cc -x <name>"
+    [[ -z "${2:-}" ]] && die "Usage: tmuxw -x <name>"
     close_window "$2"; exit 0
     ;;
   -h|--help)
-    echo "Usage: cc [name] [workdir] | cc -l | cc -a | cc -g <name> | cc -x <name>"
+    echo "Usage: tmuxw [name] [workdir] | tmuxw -l | tmuxw -a | tmuxw -g <name> | tmuxw -x <name>"
     exit 0
     ;;
 esac
 
-# ── Launch Claude Code in a new window ──────────────────────────────────────
+# ── Create a new window ─────────────────────────────────────────────────────
 
-name="${1:-claude}"
+name="${1:-shell}"
 workdir="${2:-}"
 
 # Resolve workdir
@@ -127,9 +127,9 @@ if [[ -n "$existing" ]]; then
   exit 0
 fi
 
-# Create new window
+# Create new window (plain shell, user starts whatever they need)
 if [[ -n "$workdir" ]]; then
-  tmux new-window -n "$name" -c "$workdir" "claude"
+  tmux new-window -n "$name" -c "$workdir"
 else
-  tmux new-window -n "$name" "claude"
+  tmux new-window -n "$name"
 fi

@@ -43,7 +43,7 @@ When enabled, this step installs for the specified user:
 - **Tmux config** (`~/.tmux.conf`) with Terminus Dark theme and optimized keybindings
 - **Claude Code hooks** (`~/.claude/hooks/`) for bell + OS notifications
 - **Claude Code settings** (`~/.claude/settings.json`) with Stop/Notification hooks
-- **Helper commands** (`~/bin/cc`, `~/bin/work`) for session and instance management
+- **Helper commands** (`~/bin/tmuxs`, `~/bin/tmuxw`) for session and window management
 - **Cleanup cron** (`~/bin/cleanup-sessions.sh`) to remove stale sessions
 
 ## Swap sizing policy
@@ -120,17 +120,18 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 | Command | What it does |
 |---------|-------------|
 | `mosh myhost -- tmux new-session -A -s main` | Connect via Mosh, attach to Tmux "main" |
-| `work` | Attach/create "main" session (once inside the server) |
-| `work alpha` | Attach/create "alpha" session |
-| `work -l` | List all sessions |
-| `work -k alpha` | Kill "alpha" session |
-| `work -K` | Kill all unattached sessions |
-| `cc auth` | Launch Claude Code in window "auth" |
-| `cc payment ~/pay` | Launch in window "payment" with workdir ~/pay |
-| `cc -l` | List all windows |
-| `cc -a` | List windows with 🔔 alerts |
-| `cc -g auth` | Jump to "auth" window |
-| `cc -x auth` | Close "auth" window |
+| `tmuxs` | Attach/create "main" session |
+| `tmuxs alpha` | Attach/create "alpha" session |
+| `tmuxs alpha ~/code` | Create "alpha" with working directory ~/code |
+| `tmuxs -l` | List all sessions |
+| `tmuxs -k alpha` | Kill "alpha" session |
+| `tmuxs -K` | Kill all unattached sessions |
+| `tmuxw auth` | Create window "auth" (or jump to it if exists) |
+| `tmuxw auth ~/pay` | Create window "auth" in ~/pay directory |
+| `tmuxw -l` | List all windows |
+| `tmuxw -a` | List windows with 🔔 alerts |
+| `tmuxw -g auth` | Jump to "auth" window |
+| `tmuxw -x auth` | Close "auth" window |
 
 ### Tmux keybindings
 
@@ -247,8 +248,8 @@ server-init/
 │       ├── claude-notify.sh        ← Bell + OSC notification on Stop/Notification
 │       └── clear-bell.sh           ← Clear 🔔 on window focus
 ├── scripts/
-│   ├── cc                          ← Claude Code instance manager
-│   ├── work                        ← Tmux session manager
+│   ├── tmuxs                       ← Tmux session manager
+│   ├── tmuxw                       ← Tmux window manager
 │   └── cleanup-sessions.sh         ← Stale session cleanup (cron)
 ├── client/
 │   ├── mac-setup.sh                ← Mac client setup (mosh, Ghostty, SSH sockets)
