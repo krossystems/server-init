@@ -41,29 +41,40 @@ if [[ "$event" == "Notification" ]]; then
   marker="🔔"  # Notification — needs your decision
 fi
 
-# ── Check if current window is in the foreground ────────────────────────────
-current_window=$(tmux display-message -p '#{window_id}' 2>/dev/null || true)
-active_window=$(tmux display-message -p '#{active_window_id}' 2>/dev/null || true)
+# ── Identify which window THIS hook is running in ───────────────────────────
+# $TMUX_PANE is set by tmux for every process inside a pane (e.g. %5)
+# We use it to find the window that owns this pane.
+if [[ -z "${TMUX_PANE:-}" ]]; then
+  exit 0
+fi
+
+# Get the window ID and name for the pane where Claude Code is running
+my_window_id=$(tmux display-message -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
+my_window_name=$(tmux display-message -t "$TMUX_PANE" -p '#{window_name}' 2>/dev/null || true)
+
+[[ -z "$my_window_id" ]] && exit 0
+
+# ── Check if this window is in the foreground ───────────────────────────────
+active_window_id=$(tmux display-message -p '#{active_window_id}' 2>/dev/null || true)
 
 # Only notify if we are in the BACKGROUND
-[[ "$current_window" == "$active_window" ]] && exit 0
+[[ "$my_window_id" == "$active_window_id" ]] && exit 0
 
-# ── 1. Send Tmux bell (marks window in status bar) ─────────────────────────
+# ── 1. Send Tmux bell in the correct pane ───────────────────────────────────
+tmux send-keys -t "$TMUX_PANE" "" 2>/dev/null || true
 printf '\a'
 
 # ── 2. Add marker prefix to window name ────────────────────────────────────
-window_name=$(tmux display-message -p '#{window_name}' 2>/dev/null || true)
 # Strip any existing marker first, then add the new one
-clean_name="${window_name#🟢}"
+clean_name="${my_window_name#🟢}"
 clean_name="${clean_name#🔔}"
 if [[ -n "$clean_name" ]]; then
-  tmux rename-window "${marker}${clean_name}" 2>/dev/null || true
+  tmux rename-window -t "$my_window_id" "${marker}${clean_name}" 2>/dev/null || true
 fi
 
 # ── 3. Send OSC notification via Tmux passthrough to Ghostty ────────────────
 title="${marker} Claude [${event}]"
 body="${message}"
 
-# Tmux passthrough: \ePtmux;\e ... \e\\
 printf '\ePtmux;\e\e]777;notify;%s;%s\a\e\\' "$title" "$body" 2>/dev/null || true
 printf '\ePtmux;\e\e]9;%s: %s\a\e\\' "$title" "$body" 2>/dev/null || true
