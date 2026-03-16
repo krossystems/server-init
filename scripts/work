@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# work — Tmux session manager
+#
+# Usage:
+#   work [name] [workdir]  Attach/create a Tmux session
+#   work -l                List all sessions
+#   work -k <name>         Kill a session
+#   work -K                Kill all unattached sessions (except "main")
+#   work                   Attach/create "main" session
+#
+# If already inside Tmux, switches client to the target session.
+# If outside Tmux, attaches with -d (detaches other clients for seamless
+# cross-device handoff).
+#
+# Examples:
+#   work              → resume or create "main"
+#   work alpha        → resume or create "alpha"
+#   work alpha ~/code → create "alpha" in ~/code
+# ==============================================================================
+
+set -uo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+
+die() { echo -e "${RED}[!]${NC} $*" >&2; exit 1; }
+
+# ── Subcommands ─────────────────────────────────────────────────────────────
+
+list_sessions() {
+  local sessions
+  sessions=$(tmux list-sessions 2>/dev/null || true)
+  if [[ -z "$sessions" ]]; then
+    echo -e "${DIM}No Tmux sessions running.${NC}"
+  else
+    echo -e "${BOLD}Tmux sessions:${NC}"
+    echo "$sessions" | while IFS= read -r line; do
+      if echo "$line" | grep -q "(attached)"; then
+        echo -e "  ${GREEN}▸${NC} $line"
+      else
+        echo -e "  ${DIM}○${NC} $line"
+      fi
+    done
+  fi
+}
+
+kill_session() {
+  local name="$1"
+  if ! tmux has-session -t "$name" 2>/dev/null; then
+    die "Session '$name' does not exist."
+  fi
+  tmux kill-session -t "$name"
+  echo -e "${GREEN}Killed session: $name${NC}"
+}
+
+kill_unattached() {
+  local killed=0
+  while IFS= read -r session; do
+    local sname
+    sname=$(echo "$session" | cut -d: -f1)
+    # Never kill "main"
+    [[ "$sname" == "main" ]] && continue
+    # Only kill unattached sessions
+    if ! echo "$session" | grep -q "(attached)"; then
+      tmux kill-session -t "$sname" 2>/dev/null && (( killed++ ))
+    fi
+  done < <(tmux list-sessions 2>/dev/null || true)
+
+  if (( killed > 0 )); then
+    echo -e "${GREEN}Killed $killed unattached session(s).${NC}"
+  else
+    echo -e "${DIM}No unattached sessions to kill.${NC}"
+  fi
+}
+
+# ── Parse arguments ─────────────────────────────────────────────────────────
+
+case "${1:-}" in
+  -l) list_sessions; exit 0 ;;
+  -k)
+    [[ -z "${2:-}" ]] && die "Usage: work -k <session-name>"
+    kill_session "$2"; exit 0
+    ;;
+  -K) kill_unattached; exit 0 ;;
+  -h|--help)
+    echo "Usage: work [name] [workdir] | work -l | work -k <name> | work -K"
+    exit 0
+    ;;
+esac
+
+# ── Attach or create session ────────────────────────────────────────────────
+
+name="${1:-main}"
+workdir="${2:-}"
+
+# Resolve workdir to absolute path
+if [[ -n "$workdir" ]]; then
+  workdir=$(cd "$workdir" 2>/dev/null && pwd || echo "$workdir")
+fi
+
+# Session already exists → attach/switch
+if tmux has-session -t "$name" 2>/dev/null; then
+  if [[ -n "${TMUX:-}" ]]; then
+    # Already inside Tmux → switch client
+    tmux switch-client -t "$name"
+  else
+    # Outside Tmux → attach (kick other clients for cross-device handoff)
+    tmux attach-session -d -t "$name"
+  fi
+  exit 0
+fi
+
+# Create new session
+local_args=(-s "$name")
+[[ -n "$workdir" ]] && local_args+=(-c "$workdir")
+
+if [[ -n "${TMUX:-}" ]]; then
+  # Inside Tmux → create detached, then switch
+  tmux new-session -d "${local_args[@]}"
+  tmux switch-client -t "$name"
+else
+  # Outside Tmux → create and attach directly
+  tmux new-session "${local_args[@]}"
+fi

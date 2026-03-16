@@ -1,0 +1,64 @@
+# ==============================================================================
+# Ghostty configuration — Optimized for Mosh + Tmux remote development
+# https://github.com/krossystems/server-init
+#
+# Deploy to: ~/.config/ghostty/config
+# ==============================================================================
+
+# ── Font ─────────────────────────────────────────────────────────────────────
+font-family = JetBrains Mono
+font-size = 14
+font-thicken = true
+adjust-cell-height = 15%
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+# Let Option key act as Alt so Tmux Alt-bindings work
+macos-option-as-alt = true
+
+# ── Unbind keys that conflict with Tmux ──────────────────────────────────────
+# Alt+arrows are used by Tmux for pane navigation
+keybind = alt+left=unbind
+keybind = alt+right=unbind
+keybind = alt+up=unbind
+keybind = alt+down=unbind
+
+# Cmd+D / Cmd+Shift+D: Ghostty split — disabled to avoid confusion with Tmux
+keybind = cmd+d=unbind
+keybind = cmd+shift+d=unbind
+
+# ── Quick Terminal ───────────────────────────────────────────────────────────
+keybind = global:cmd+grave_accent=toggle_quick_terminal
+
+# ── Scrollback ───────────────────────────────────────────────────────────────
+# Keep small — real scrollback lives in Tmux (100k lines)
+scrollback-limit = 10000
+
+# ── Clipboard ────────────────────────────────────────────────────────────────
+copy-on-select = clipboard
+clipboard-read = allow
+clipboard-write = allow
+
+# ── Colorscheme — Terminus Dark ──────────────────────────────────────────────
+# Matches the Tmux status bar colorscheme for visual consistency
+background = 1a1a2e
+foreground = e0e0e0
+
+# Normal ANSI colors
+palette = 0=#282a36
+palette = 1=#f07178
+palette = 2=#c3e88d
+palette = 3=#ffcb6b
+palette = 4=#82aaff
+palette = 5=#c792ea
+palette = 6=#89ddff
+palette = 7=#d0d0d0
+
+# Bright ANSI colors
+palette = 8=#546e7a
+palette = 9=#ff8b92
+palette = 10=#ddffa7
+palette = 11=#ffe585
+palette = 12=#9cc4ff
+palette = 13=#e1acff
+palette = 14=#a3f7ff
+palette = 15=#ffffff

@@ -1,0 +1,24 @@
+# ==============================================================================
+# SSH config snippet — Add to ~/.ssh/config
+# https://github.com/krossystems/server-init
+#
+# Features:
+#   - Connection multiplexing (ControlMaster) for fast subsequent connections
+#   - Keepalive to prevent idle disconnects
+#   - Compression for better performance over slow links
+# ==============================================================================
+
+Host *
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+    Compression yes
+    AddKeysToAgent yes
+    IdentityFile ~/.ssh/id_ed25519
+
+Host dev
+    HostName YOUR_SERVER_IP
+    User YOUR_USERNAME
+    Port 22

@@ -25,7 +25,11 @@ export NEEDRESTART_SUSPEND=1    # suppress needrestart prompts entirely
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 NEW_USER="${NEW_USER:-krossys}"
-INSTALL_ZELLIJ="${INSTALL_ZELLIJ:-true}"
+INSTALL_TMUX="${INSTALL_TMUX:-true}"
+INSTALL_CLAUDE_CODE="${INSTALL_CLAUDE_CODE:-false}"
+
+# GitHub raw base URL (used when running via curl | bash without a local clone)
+GITHUB_RAW="https://raw.githubusercontent.com/krossystems/server-init/main"
 
 # Step outcome tracking (used by print_summary for smart messages)
 USER_EXISTED=false
@@ -56,23 +60,27 @@ ${BOLD}Usage:${NC}
 
 ${BOLD}Options:${NC}
   -u, --username <name>     Username for the new sudo user (default: krossys)
-      --no-zellij           Skip zellij installation
+      --no-tmux             Skip mosh + tmux installation
+      --no-zellij           (deprecated alias for --no-tmux)
+      --claude-code         Deploy Claude Code parallel dev environment for the user
   -h, --help                Show this help
 
 ${BOLD}Environment variables (alternative to flags):${NC}
-  NEW_USER, INSTALL_ZELLIJ
+  NEW_USER, INSTALL_TMUX, INSTALL_CLAUDE_CODE
 
-${BOLD}Example:${NC}
+${BOLD}Examples:${NC}
   bash init.sh --username john
+  bash init.sh --username john --claude-code
 EOF
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -u|--username) NEW_USER="$2";        shift 2 ;;
-    --no-zellij)   INSTALL_ZELLIJ=false; shift   ;;
-    -h|--help)     usage; exit 0 ;;
+    -u|--username)  NEW_USER="$2";            shift 2 ;;
+    --no-tmux|--no-zellij) INSTALL_TMUX=false; shift  ;;
+    --claude-code)  INSTALL_CLAUDE_CODE=true; shift   ;;
+    -h|--help)      usage; exit 0 ;;
     *) die "Unknown option: $1. Use --help for usage." ;;
   esac
 done
@@ -310,49 +318,133 @@ step_copy_ssh_keys() {
   log "SSH authorized_keys copied to $dest_keys"
 }
 
-# ── Step 5: Install zellij ────────────────────────────────────────────────────
-step_install_zellij() {
-  section "Installing zellij"
-
-  if command -v zellij &>/dev/null; then
-    log "zellij already installed: $(zellij --version)"
-    return
+# ── Config file resolver ─────────────────────────────────────────────────────
+# If init.sh was run from a local clone, read from the repo.  Otherwise fetch
+# from GitHub.  Usage: get_config_file <relative-path> → prints content to stdout.
+get_config_file() {
+  local relpath="$1"
+  # $SCRIPT_DIR is set in main() before any step runs
+  if [[ -f "${SCRIPT_DIR}/${relpath}" ]]; then
+    cat "${SCRIPT_DIR}/${relpath}"
+  else
+    curl -fsSL "${GITHUB_RAW}/${relpath}"
   fi
-
-  local arch zellij_arch
-  arch=$(uname -m)
-  case "$arch" in
-    x86_64)        zellij_arch="x86_64-unknown-linux-musl" ;;
-    aarch64|arm64) zellij_arch="aarch64-unknown-linux-musl" ;;
-    armv7l)        zellij_arch="armv7-unknown-linux-musleabihf" ;;
-    *)
-      warn "Unsupported architecture for zellij: $arch. Skipping."
-      return
-      ;;
-  esac
-
-  local version
-  version=$(curl -fsSL "https://api.github.com/repos/zellij-org/zellij/releases/latest" \
-    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
-
-  if [[ -z "$version" ]]; then
-    warn "Could not determine latest zellij version. Skipping."
-    return
-  fi
-
-  local url="https://github.com/zellij-org/zellij/releases/download/${version}/zellij-${zellij_arch}.tar.gz"
-  log "Downloading zellij ${version} (${zellij_arch})..."
-
-  local tmp
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' RETURN
-
-  curl -fsSL "$url" | tar -xzf - -C "$tmp"
-  install -m 755 "$tmp/zellij" /usr/local/bin/zellij
-  log "zellij ${version} installed to /usr/local/bin/zellij"
 }
 
-# ── Step 6: Configure swap ────────────────────────────────────────────────────
+# Deploy a config file to a target path owned by a specific user.
+# Usage: deploy_config <relative-path> <dest-path> <owner> <mode>
+deploy_config() {
+  local relpath="$1" dest="$2" owner="$3" mode="${4:-644}"
+  install -d -o "$owner" -g "$owner" "$(dirname "$dest")"
+  get_config_file "$relpath" > "$dest"
+  chown "$owner:$owner" "$dest"
+  chmod "$mode" "$dest"
+}
+
+# ── Step 5: Install mosh + tmux ─────────────────────────────────────────────
+step_install_tmux_mosh() {
+  section "Installing mosh, tmux, and jq"
+
+  local pkgs=(mosh tmux jq)
+  pkg_install "${pkgs[@]}"
+
+  # Open Mosh UDP ports in ufw if active
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw allow 60000:61000/udp comment "Mosh" >/dev/null 2>&1 || true
+    log "UFW: opened UDP 60000-61000 for Mosh."
+  fi
+
+  log "mosh $(mosh --version 2>&1 | head -1 || echo '?'), tmux $(tmux -V 2>/dev/null || echo '?'), jq installed."
+}
+
+# ── Step 6: Deploy Claude Code parallel dev environment ──────────────────────
+step_setup_claude_code() {
+  section "Setting up Claude Code parallel dev environment for $NEW_USER"
+
+  local user_home="/home/${NEW_USER}"
+
+  # 6a — Install Node.js via nvm and Claude Code
+  if ! su - "$NEW_USER" -c 'command -v claude' &>/dev/null; then
+    log "Installing Node.js (nvm) and Claude Code..."
+    su - "$NEW_USER" -c 'bash -c "
+      export NVM_DIR=\"\$HOME/.nvm\"
+      if [ ! -d \"\$NVM_DIR\" ]; then
+        curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+      fi
+      . \"\$NVM_DIR/nvm.sh\"
+      nvm install --lts
+      npm install -g @anthropic-ai/claude-code
+    "'
+    log "Claude Code installed."
+  else
+    log "Claude Code already installed."
+  fi
+
+  # 6b — Deploy tmux.conf
+  deploy_config "configs/tmux.conf" "${user_home}/.tmux.conf" "$NEW_USER" 644
+  log "Deployed ~/.tmux.conf"
+
+  # 6c — Deploy Claude Code hooks
+  deploy_config "configs/hooks/claude-notify.sh" \
+    "${user_home}/.claude/hooks/claude-notify.sh" "$NEW_USER" 755
+  deploy_config "configs/hooks/clear-bell.sh" \
+    "${user_home}/.claude/hooks/clear-bell.sh" "$NEW_USER" 755
+  log "Deployed Claude Code hook scripts."
+
+  # 6d — Deploy Claude Code settings.json
+  local settings_dest="${user_home}/.claude/settings.json"
+  if [[ -f "$settings_dest" ]]; then
+    log "Claude Code settings.json already exists — skipping (manual merge may be needed)."
+  else
+    deploy_config "configs/claude-settings.json" "$settings_dest" "$NEW_USER" 644
+    log "Deployed ~/.claude/settings.json"
+  fi
+
+  # 6e — Deploy helper scripts (cc, work)
+  install -d -o "$NEW_USER" -g "$NEW_USER" "${user_home}/bin"
+  deploy_config "scripts/cc"   "${user_home}/bin/cc"   "$NEW_USER" 755
+  deploy_config "scripts/work" "${user_home}/bin/work" "$NEW_USER" 755
+  log "Deployed ~/bin/cc and ~/bin/work"
+
+  # 6f — Deploy cleanup-sessions.sh and cron job
+  deploy_config "scripts/cleanup-sessions.sh" \
+    "${user_home}/bin/cleanup-sessions.sh" "$NEW_USER" 755
+
+  local cron_job="0 */6 * * * ${user_home}/bin/cleanup-sessions.sh >> /tmp/tmux-cleanup.log 2>&1"
+  if ! su - "$NEW_USER" -c "crontab -l 2>/dev/null" | grep -qF "cleanup-sessions.sh"; then
+    ( su - "$NEW_USER" -c "crontab -l 2>/dev/null" || true; echo "$cron_job" ) \
+      | su - "$NEW_USER" -c "crontab -"
+    log "Installed cleanup-sessions cron job (every 6h)."
+  else
+    log "Cleanup cron job already exists."
+  fi
+
+  # 6g — Configure shell environment (PATH, locale, nvm)
+  local profile="${user_home}/.bashrc"
+  local marker="# --- server-init: claude-code environment ---"
+  if ! grep -qF "$marker" "$profile" 2>/dev/null; then
+    cat >> "$profile" <<EOF
+
+$marker
+export PATH="\$HOME/bin:\$PATH"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# nvm
+export NVM_DIR="\$HOME/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+[ -s "\$NVM_DIR/bash_completion" ] && . "\$NVM_DIR/bash_completion"
+EOF
+    chown "$NEW_USER:$NEW_USER" "$profile"
+    log "Configured shell environment in ~/.bashrc"
+  else
+    log "Shell environment already configured."
+  fi
+
+  log "Claude Code parallel dev environment ready for '$NEW_USER'."
+}
+
+# ── Step 7: Configure swap ────────────────────────────────────────────────────
 step_setup_swap() {
   section "Configuring swap"
 
@@ -591,7 +683,8 @@ print_summary() {
     echo "  ✔  SSH authorized_keys copied to $NEW_USER"
   fi
 
-  [[ "$INSTALL_ZELLIJ" == "true" ]] && echo "  ✔  zellij installed"
+  [[ "$INSTALL_TMUX" == "true" ]] && echo "  ✔  mosh + tmux installed"
+  [[ "$INSTALL_CLAUDE_CODE" == "true" ]] && echo "  ✔  Claude Code parallel dev environment deployed"
   echo "  ✔  Swap configured"
 
   if [[ "${SSH_HARDENED:-false}" == "true" ]]; then
@@ -644,6 +737,13 @@ print_summary() {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
+  # Resolve script directory for local config file lookup
+  if [[ -f "$0" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  else
+    SCRIPT_DIR=""   # running via pipe — will fall back to GitHub raw URL
+  fi
+
   echo
   echo -e "${BOLD}server-init${NC} — starting setup for user: ${CYAN}${NEW_USER}${NC}"
   echo
@@ -653,7 +753,8 @@ main() {
   step_install_essentials
   step_create_user
   step_copy_ssh_keys
-  [[ "$INSTALL_ZELLIJ" == "true" ]] && step_install_zellij
+  [[ "$INSTALL_TMUX" == "true" ]] && step_install_tmux_mosh
+  [[ "$INSTALL_CLAUDE_CODE" == "true" ]] && step_setup_claude_code
   step_setup_swap
   step_harden_ssh
   step_setup_fail2ban
