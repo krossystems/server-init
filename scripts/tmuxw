@@ -5,15 +5,21 @@
 # Usage:
 #   tmuxw [name] [workdir]   Create a named window (or jump to it if exists)
 #   tmuxw -l                 List all windows in the current session
-#   tmuxw -a                 List windows with 🔔 (needs attention)
+#   tmuxw -a                 List windows with status markers
 #   tmuxw -g <name>          Go to (jump to) a window by name (fuzzy match)
 #   tmuxw -x <name>          Close a window by name (fuzzy match)
+#   tmuxw -p [name]          Park a window to "park" session (default: current)
+#   tmuxw -u [name]          Unpark a window back to current session
 #   tmuxw                    Create window named "shell"
 #
 # Examples:
 #   tmuxw auth               → new window "auth"
 #   tmuxw payment ~/pay      → new window "payment" in ~/pay directory
 #   tmuxw -g auth            → jump to the "auth" window
+#   tmuxw -p auth            → park "auth" to background
+#   tmuxw -p                 → park current window
+#   tmuxw -u auth            → bring "auth" back from park
+#   tmuxw -u                 → list all parked windows
 # ==============================================================================
 
 set -uo pipefail
@@ -25,6 +31,8 @@ die() { echo -e "${RED}[!]${NC} $*" >&2; exit 1; }
 
 # Must be inside Tmux
 [[ -z "${TMUX:-}" ]] && die "Not inside Tmux. Run 'tmuxs' first to start a session."
+
+PARK_SESSION="park"
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
@@ -55,18 +63,23 @@ list_alerts() {
 }
 
 # Find window by fuzzy name match → prints window index or empty
+# Usage: find_window <pattern> [session]
 find_window() {
   local pattern="$1"
+  local session="${2:-}"
+  local target_flag=""
+  [[ -n "$session" ]] && target_flag="-t $session"
+
   # Exact match first (ignoring status markers)
   local match
-  match=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null \
+  match=$(tmux list-windows $target_flag -F '#{window_index}:#{window_name}' 2>/dev/null \
     | sed 's/[🟢🔔⏳⌛]//' | grep -i "^[0-9]*:${pattern}$" | head -1 | cut -d: -f1)
   if [[ -n "$match" ]]; then
     echo "$match"
     return
   fi
   # Substring match
-  match=$(tmux list-windows -F '#{window_index}:#{window_name}' 2>/dev/null \
+  match=$(tmux list-windows $target_flag -F '#{window_index}:#{window_name}' 2>/dev/null \
     | sed 's/[🟢🔔⏳⌛]//' | grep -i "${pattern}" | head -1 | cut -d: -f1)
   echo "$match"
 }
@@ -96,6 +109,92 @@ close_window() {
   echo -e "${GREEN}Closed window ${idx}: ${wname}${NC}"
 }
 
+# Park a window — move to "park" session
+park_window() {
+  local name="${1:-}"
+
+  # Ensure park session exists (create detached if needed)
+  if ! tmux has-session -t "$PARK_SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$PARK_SESSION"
+  fi
+
+  if [[ -z "$name" ]]; then
+    # Park current window
+    local cur_name
+    cur_name=$(tmux display-message -p '#{window_name}' 2>/dev/null)
+    # Don't park the last window — tmux won't allow it
+    local win_count
+    win_count=$(tmux list-windows 2>/dev/null | wc -l)
+    if (( win_count <= 1 )); then
+      die "Can't park the only window. Create another window first."
+    fi
+    tmux move-window -t "$PARK_SESSION"
+    echo -e "${GREEN}Parked current window '${cur_name}' → ${PARK_SESSION}${NC}"
+  else
+    local idx
+    idx=$(find_window "$name")
+    if [[ -z "$idx" ]]; then
+      die "No window matching '$name'. Use 'tmuxw -l' to list."
+    fi
+    local wname
+    wname=$(tmux list-windows -F '#{window_index}:#{window_name}' | grep "^${idx}:" | cut -d: -f2-)
+    local win_count
+    win_count=$(tmux list-windows 2>/dev/null | wc -l)
+    if (( win_count <= 1 )); then
+      die "Can't park the only window. Create another window first."
+    fi
+    tmux move-window -s ":$idx" -t "$PARK_SESSION"
+    echo -e "${GREEN}Parked '${wname}' → ${PARK_SESSION}${NC}"
+  fi
+}
+
+# Unpark a window — move from "park" session back here
+unpark_window() {
+  local name="${1:-}"
+
+  if ! tmux has-session -t "$PARK_SESSION" 2>/dev/null; then
+    die "No parked windows (${PARK_SESSION} session doesn't exist)."
+  fi
+
+  if [[ -z "$name" ]]; then
+    # List parked windows
+    local parked
+    parked=$(tmux list-windows -t "$PARK_SESSION" -F '#{window_index}: #{window_name}  #{pane_current_path}' 2>/dev/null || true)
+    if [[ -z "$parked" ]]; then
+      echo -e "${DIM}No parked windows.${NC}"
+    else
+      echo -e "${BOLD}Parked windows:${NC}"
+      echo "$parked" | while IFS= read -r line; do
+        echo -e "  ${DIM}○${NC} $line"
+      done
+      echo
+      echo -e "${DIM}Unpark with: tmuxw -u <name>${NC}"
+    fi
+    return
+  fi
+
+  local idx
+  idx=$(find_window "$name" "$PARK_SESSION")
+  if [[ -z "$idx" ]]; then
+    die "No parked window matching '$name'. Use 'tmuxw -u' to list."
+  fi
+  local wname
+  wname=$(tmux list-windows -t "$PARK_SESSION" -F '#{window_index}:#{window_name}' \
+    | grep "^${idx}:" | cut -d: -f2-)
+
+  local cur_session
+  cur_session=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  tmux move-window -s "${PARK_SESSION}:${idx}" -t "$cur_session"
+  echo -e "${GREEN}Unparked '${wname}' → ${cur_session}${NC}"
+
+  # Clean up park session if empty
+  local remaining
+  remaining=$(tmux list-windows -t "$PARK_SESSION" 2>/dev/null | wc -l || echo 0)
+  if (( remaining == 0 )); then
+    tmux kill-session -t "$PARK_SESSION" 2>/dev/null || true
+  fi
+}
+
 # ── Parse arguments ─────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -109,8 +208,19 @@ case "${1:-}" in
     [[ -z "${2:-}" ]] && die "Usage: tmuxw -x <name>"
     close_window "$2"; exit 0
     ;;
+  -p) park_window "${2:-}"; exit 0 ;;
+  -u) unpark_window "${2:-}"; exit 0 ;;
   -h|--help)
-    echo "Usage: tmuxw [name] [workdir] | tmuxw -l | tmuxw -a | tmuxw -g <name> | tmuxw -x <name>"
+    cat <<'EOF'
+Usage:
+  tmuxw [name] [workdir]   Create/jump to a named window
+  tmuxw -l                 List all windows
+  tmuxw -a                 List windows with status markers
+  tmuxw -g <name>          Jump to window (fuzzy match)
+  tmuxw -x <name>          Close window (fuzzy match)
+  tmuxw -p [name]          Park window to background (default: current)
+  tmuxw -u [name]          Unpark window (no name = list parked)
+EOF
     exit 0
     ;;
 esac
