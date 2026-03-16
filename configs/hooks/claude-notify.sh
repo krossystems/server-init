@@ -6,8 +6,8 @@
 # Only fires when the Tmux window is NOT in the foreground.
 #
 # Markers:
-#   ✅ = Stop (task completed, no action needed)
-#   ❓ = Notification (needs your input/decision)
+#   🟢 = Stop (task completed, no action needed)
+#   🔔 = Notification (needs your input/decision)
 #
 # Reads hook JSON from stdin:
 #   { "hook_event_name": "Stop", "message": "...", ... }
@@ -36,9 +36,9 @@ fi
 [[ -z "$message" ]] && message="Task finished"
 
 # ── Choose marker based on event type ────────────────────────────────────────
-marker="✅"   # Stop — task completed
+marker="🟢"   # Stop — task completed
 if [[ "$event" == "Notification" ]]; then
-  marker="❓"  # Notification — needs your decision
+  marker="🔔"  # Notification — needs your decision
 fi
 
 # ── Check if current window is in the foreground ────────────────────────────
@@ -54,8 +54,8 @@ printf '\a'
 # ── 2. Add marker prefix to window name ────────────────────────────────────
 window_name=$(tmux display-message -p '#{window_name}' 2>/dev/null || true)
 # Strip any existing marker first, then add the new one
-clean_name="${window_name#✅}"
-clean_name="${clean_name#❓}"
+clean_name="${window_name#🟢}"
+clean_name="${clean_name#🔔}"
 if [[ -n "$clean_name" ]]; then
   tmux rename-window "${marker}${clean_name}" 2>/dev/null || true
 fi

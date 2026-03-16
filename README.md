@@ -157,8 +157,8 @@ When Claude Code finishes a task or needs input, background windows are marked:
 
 | Event | Marker | Meaning |
 |---|---|---|
-| Stop | ✅ | Task completed, review when convenient |
-| Notification | ❓ | Needs your input/decision |
+| Stop | 🟢 | Task completed, review when convenient |
+| Notification | 🔔 | Needs your input/decision |
 
 For each event:
 
