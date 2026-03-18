@@ -6,20 +6,20 @@ if ! [ -t 0 ]; then
   input=$(cat)
 fi
 
-# Colors
-C_DIR='\033[38;5;75m'      # blue
-C_GIT='\033[38;5;114m'     # green
-C_MODEL='\033[38;5;183m'   # purple
-C_CTX='\033[38;5;222m'     # yellow
-C_WARN='\033[38;5;203m'    # red
-C_ADD='\033[38;5;114m'     # green
-C_RM='\033[38;5;203m'      # red
-C_TOK='\033[38;5;180m'     # orange
-C_TIME='\033[38;5;245m'    # gray
-C_DIM='\033[38;5;240m'     # dim gray
-C_LOAD='\033[38;5;147m'    # light purple
-C_MEM='\033[38;5;117m'     # light cyan
-NC='\033[0m'
+# Colors — $'...' embeds real ESC bytes at assignment time
+C_DIR=$'\033[38;5;75m'      # blue
+C_GIT=$'\033[38;5;114m'     # green
+C_MODEL=$'\033[38;5;183m'   # purple
+C_CTX=$'\033[38;5;222m'     # yellow
+C_WARN=$'\033[38;5;203m'    # red
+C_ADD=$'\033[38;5;114m'     # green
+C_RM=$'\033[38;5;203m'      # red
+C_TOK=$'\033[38;5;180m'     # orange
+C_TIME=$'\033[38;5;245m'    # gray
+C_DIM=$'\033[38;5;240m'     # dim gray
+C_LOAD=$'\033[38;5;147m'    # light purple
+C_MEM=$'\033[38;5;117m'     # light cyan
+NC=$'\033[0m'
 
 # Parse JSON
 cwd="" model="" pct="" size="" cost=""
@@ -148,7 +148,7 @@ fi
 
 # 7. Cost
 if [[ -n "$cost" && "$cost" != "0" ]]; then
-  cost_fmt=$(printf "%.2f" "$cost")
+  cost_fmt=$(printf "%.2f" "$cost" 2>/dev/null || echo "$cost")
   r+="  ${C_DIM}\$${cost_fmt}${NC}"
 fi
 
@@ -183,4 +183,4 @@ if [[ -n "$mem_used" && "$mem_pct" =~ ^[0-9]+$ ]]; then
   r+="  ${mem_color}◈ ${mem_used}G/${mem_pct}%${NC}"
 fi
 
-echo -e "$r"
+printf '%s\n' "$r"
