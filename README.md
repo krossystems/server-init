@@ -129,9 +129,13 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 | `tmuxw auth` | Create window "auth" (or jump to it if exists) |
 | `tmuxw auth ~/pay` | Create window "auth" in ~/pay directory |
 | `tmuxw -l` | List all windows |
-| `tmuxw -a` | List windows with 🔔 alerts |
+| `tmuxw -a` | List windows with status markers |
 | `tmuxw -g auth` | Jump to "auth" window |
 | `tmuxw -x auth` | Close "auth" window |
+| `tmuxw -p auth` | Park "auth" window (hide to background) |
+| `tmuxw -p` | Park current window |
+| `tmuxw -u` | List all parked windows |
+| `tmuxw -u auth` | Unpark "auth" back to current session |
 
 ### Tmux keybindings
 
@@ -153,20 +157,28 @@ Prefix is `Ctrl+A`. Most navigation works without prefix.
 
 ## Notification system
 
-When Claude Code finishes a task or needs input, background windows are marked:
+Window names show Claude Code's current state at a glance:
 
-| Event | Marker | Meaning |
+| State | Marker | Meaning |
 |---|---|---|
+| Working | ⏳ ↔ ⌛ | Hourglass flips on each tool use (animated) |
 | Stop | 🟢 | Task completed, review when convenient |
 | Notification | 🔔 | Needs your input/decision |
 
-For each event:
+```
+Status bar example:
+ 1:⏳auth  2:🟢payment  3:🔔api  4:shell
+   ↑          ↑            ↑
+ working    completed   needs input
+```
 
-1. **Tmux bell** — the background window turns yellow in the status bar
-2. **Marker prefix** (✅ or ❓) — added to the window name
-3. **OS notification** — sent via OSC passthrough to Ghostty (shows marker in title)
+When a background window reaches Stop or Notification:
 
-Markers are automatically cleared when you switch to that window.
+1. **Tmux bell** — the window turns yellow in the status bar
+2. **Marker prefix** (🟢 or 🔔) — replaces the hourglass on the window name
+3. **OS notification** — sent via OSC passthrough to Ghostty
+
+All markers are automatically cleared when you switch to that window.
 
 Use `tmuxw -a` to list all marked windows at a glance.
 
@@ -253,7 +265,8 @@ server-init/
 │   ├── claude-settings.json        ← Claude Code hook settings
 │   └── hooks/
 │       ├── claude-notify.sh        ← Bell + OSC notification on Stop/Notification
-│       └── clear-bell.sh           ← Clear 🔔 on window focus
+│       ├── claude-status.sh        ← Hourglass animation on PreToolUse/PostToolUse
+│       └── clear-bell.sh           ← Clear markers on window focus
 ├── scripts/
 │   ├── tmuxs                       ← Tmux session manager
 │   ├── tmuxw                       ← Tmux window manager
