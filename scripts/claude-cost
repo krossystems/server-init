@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+claude-cost: Calculate Claude Code session costs for a project directory.
+
+Usage:
+  claude-cost              # current directory
+  claude-cost ~/some/proj  # specific directory
+  claude-cost --all        # all projects
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+from datetime import datetime
+
+# Pricing per million tokens (USD)
+PRICING = {
+    # Opus
+    "claude-opus-4-6":         {"input": 15.0,  "output": 75.0,  "cache_write": 18.75, "cache_read": 1.50},
+    "claude-opus-4-5":         {"input": 15.0,  "output": 75.0,  "cache_write": 18.75, "cache_read": 1.50},
+    "claude-opus-3-5":         {"input": 15.0,  "output": 75.0,  "cache_write": 18.75, "cache_read": 1.50},
+    # Sonnet
+    "claude-sonnet-4-6":       {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    "claude-sonnet-4-5":       {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    "claude-sonnet-3-7":       {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    "claude-sonnet-3-5":       {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    # Haiku
+    "claude-haiku-4-5":        {"input": 0.80,  "output": 4.0,   "cache_write": 1.00,  "cache_read": 0.08},
+    "claude-haiku-3-5":        {"input": 0.80,  "output": 4.0,   "cache_write": 1.00,  "cache_read": 0.08},
+}
+
+def get_price(model: str, key: str) -> float:
+    """Look up price, falling back to prefix match."""
+    if model in PRICING:
+        return PRICING[model][key]
+    for k, v in PRICING.items():
+        if model.startswith(k) or k in model:
+            return v[key]
+    # Unknown model: use sonnet pricing as default
+    return PRICING["claude-sonnet-4-6"][key]
+
+def calc_cost(usage: dict, model: str) -> float:
+    inp   = usage.get("input_tokens", 0)
+    out   = usage.get("output_tokens", 0)
+    cw    = usage.get("cache_creation_input_tokens", 0)
+    cr    = usage.get("cache_read_input_tokens", 0)
+    cost  = inp  * get_price(model, "input")       / 1_000_000
+    cost += out  * get_price(model, "output")      / 1_000_000
+    cost += cw   * get_price(model, "cache_write") / 1_000_000
+    cost += cr   * get_price(model, "cache_read")  / 1_000_000
+    return cost
+
+def path_to_project_dir(path: Path) -> Path:
+    """Convert a filesystem path to the claude projects directory slug."""
+    resolved = path.resolve()
+    slug = str(resolved).replace("/", "-")
+    return Path.home() / ".claude" / "projects" / slug
+
+def process_jsonl(jsonl_path: Path) -> dict:
+    """Parse a JSONL session file and return cost summary."""
+    total_cost = 0.0
+    total_in = 0
+    total_out = 0
+    total_cache_write = 0
+    total_cache_read = 0
+    models = set()
+    first_ts = None
+    last_ts = None
+    turns = 0
+
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                ts = d.get("timestamp")
+                if ts:
+                    if first_ts is None:
+                        first_ts = ts
+                    last_ts = ts
+
+                msg = d.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not usage:
+                    continue
+
+                model = msg.get("model", "unknown")
+                models.add(model)
+                cost = calc_cost(usage, model)
+                total_cost += cost
+                total_in += usage.get("input_tokens", 0)
+                total_out += usage.get("output_tokens", 0)
+                total_cache_write += usage.get("cache_creation_input_tokens", 0)
+                total_cache_read += usage.get("cache_read_input_tokens", 0)
+                turns += 1
+
+    except (OSError, PermissionError):
+        return {}
+
+    if turns == 0:
+        return {}
+
+    return {
+        "file": jsonl_path.name,
+        "cost": total_cost,
+        "turns": turns,
+        "input": total_in,
+        "output": total_out,
+        "cache_write": total_cache_write,
+        "cache_read": total_cache_read,
+        "models": sorted(models),
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+    }
+
+def fmt_ts(ts: str | None) -> str:
+    if not ts:
+        return "?"
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ts[:16]
+
+def fmt_tok(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.0f}K"
+    return str(n)
+
+def print_project(project_dir: Path, label: str):
+    if not project_dir.exists():
+        print(f"  No session data found for: {label}")
+        return
+
+    sessions = []
+    for f in sorted(project_dir.glob("*.jsonl")):
+        r = process_jsonl(f)
+        if r:
+            sessions.append(r)
+
+    if not sessions:
+        print(f"  No cost data in sessions for: {label}")
+        return
+
+    sessions.sort(key=lambda s: s.get("first_ts") or "")
+
+    print(f"\n{'─'*70}")
+    print(f"  Project: {label}")
+    print(f"{'─'*70}")
+    print(f"  {'Date':<17} {'Cost':>8} {'Turns':>6} {'In':>7} {'Out':>7} {'CacheW':>7} {'CacheR':>7}")
+    print(f"  {'─'*17} {'─'*8} {'─'*6} {'─'*7} {'─'*7} {'─'*7} {'─'*7}")
+
+    grand_total = 0.0
+    for s in sessions:
+        date = fmt_ts(s["first_ts"])
+        cost = s["cost"]
+        grand_total += cost
+        print(f"  {date:<17} ${cost:>7.3f} {s['turns']:>6} "
+              f"{fmt_tok(s['input']):>7} {fmt_tok(s['output']):>7} "
+              f"{fmt_tok(s['cache_write']):>7} {fmt_tok(s['cache_read']):>7}")
+
+    print(f"  {'─'*17} {'─'*8}")
+    print(f"  {'TOTAL':<17} ${grand_total:>7.3f}  ({len(sessions)} sessions)")
+    return grand_total
+
+def main():
+    args = sys.argv[1:]
+    claude_projects = Path.home() / ".claude" / "projects"
+
+    if "--all" in args:
+        grand = 0.0
+        if not claude_projects.exists():
+            print("No ~/.claude/projects directory found.")
+            return
+        for proj_dir in sorted(claude_projects.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            # Convert slug back to path for display
+            label = proj_dir.name.replace("-", "/", 1)  # first - is leading /
+            label = "/" + label[1:] if label.startswith("/") else label
+            # Simpler: just show the slug name
+            label = proj_dir.name
+            total = print_project(proj_dir, label)
+            if total:
+                grand += total
+        print(f"\n{'═'*70}")
+        print(f"  GRAND TOTAL: ${grand:.3f}")
+        return
+
+    if args:
+        target = Path(args[0]).expanduser()
+    else:
+        target = Path.cwd()
+
+    project_dir = path_to_project_dir(target)
+    label = str(target)
+    print_project(project_dir, label)
+    print()
+
+if __name__ == "__main__":
+    main()

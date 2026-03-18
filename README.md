@@ -136,6 +136,9 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 | `tmuxw -p` | Park current window |
 | `tmuxw -u` | List all parked windows |
 | `tmuxw -u auth` | Unpark "auth" back to current session |
+| `claude-cost` | Session costs for current project directory |
+| `claude-cost ~/proj` | Session costs for a specific directory |
+| `claude-cost --all` | Session costs for all projects |
 
 ### Tmux keybindings
 
@@ -271,6 +274,7 @@ server-init/
 ├── scripts/
 │   ├── tmuxs                       ← Tmux session manager
 │   ├── tmuxw                       ← Tmux window manager
+│   ├── claude-cost                 ← Query Claude Code session costs by project
 │   └── cleanup-sessions.sh         ← Stale session cleanup (cron)
 ├── client/
 │   ├── mac-setup.sh                ← Mac client setup (mosh, Ghostty, SSH sockets)
