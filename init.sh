@@ -437,20 +437,7 @@ step_setup_claude_code() {
   deploy_config "scripts/claude-cost" "${user_home}/bin/claude-cost" "$NEW_USER" 755
   log "Deployed ~/bin/tmuxs, ~/bin/tmuxw, ~/bin/claude-cost"
 
-  # 6f — Deploy cleanup-sessions.sh and cron job
-  deploy_config "scripts/cleanup-sessions.sh" \
-    "${user_home}/bin/cleanup-sessions.sh" "$NEW_USER" 755
-
-  local cron_job="0 */6 * * * ${user_home}/bin/cleanup-sessions.sh >> /tmp/tmux-cleanup.log 2>&1"
-  if ! su - "$NEW_USER" -c "crontab -l 2>/dev/null" | grep -qF "cleanup-sessions.sh"; then
-    ( su - "$NEW_USER" -c "crontab -l 2>/dev/null" || true; echo "$cron_job" ) \
-      | su - "$NEW_USER" -c "crontab -"
-    log "Installed cleanup-sessions cron job (every 6h)."
-  else
-    log "Cleanup cron job already exists."
-  fi
-
-  # 6g — Configure shell environment (PATH, locale, and nvm if installed)
+  # 6f — Configure shell environment (PATH, locale, and nvm if installed)
   local profile="${user_home}/.bashrc"
   local marker="# --- server-init: claude-code environment ---"
   if ! grep -qF "$marker" "$profile" 2>/dev/null; then

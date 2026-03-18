@@ -43,8 +43,7 @@ When enabled, this step installs for the specified user:
 - **Tmux config** (`~/.tmux.conf`) with Terminus Dark theme and optimized keybindings
 - **Claude Code hooks** (`~/.claude/hooks/`) for bell + OS notifications
 - **Claude Code settings** (`~/.claude/settings.json`) with Stop/Notification hooks
-- **Helper commands** (`~/bin/tmuxs`, `~/bin/tmuxw`) for session and window management
-- **Cleanup cron** (`~/bin/cleanup-sessions.sh`) to remove stale sessions
+- **Helper commands** (`~/bin/tmuxs`, `~/bin/tmuxw`, `~/bin/claude-cost`) for session/window/cost management
 
 ## Swap sizing policy
 
@@ -128,13 +127,11 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 | `tmuxs -K` | Kill all unattached sessions |
 | `tmuxw auth` | Create window "auth" (or jump to it if exists) |
 | `tmuxw auth ~/pay` | Create window "auth" in ~/pay directory |
-| `tmuxw -l` | List all windows |
-| `tmuxw -a` | List windows with status markers |
-| `tmuxw -g auth` | Jump to "auth" window |
+| `tmuxw -l` | List windows with status markers (table) |
+| `tmuxw -a` | List all windows including parked (table) |
 | `tmuxw -x auth` | Close "auth" window |
-| `tmuxw -p auth` | Park "auth" window (hide to background) |
+| `tmuxw -p auth` | Park "auth" to park-{session} |
 | `tmuxw -p` | Park current window |
-| `tmuxw -u` | List all parked windows |
 | `tmuxw -u auth` | Unpark "auth" back to current session |
 | `claude-cost` | Session costs for current project directory |
 | `claude-cost ~/proj` | Session costs for a specific directory |
@@ -144,19 +141,22 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 
 Prefix is `Ctrl+A`. Most navigation works without prefix.
 
+> **Mac users:** `Alt` = `Option` key. Requires `macos-option-as-alt = true` in Ghostty config (`~/.config/ghostty/config`). Restart Ghostty after changing.
+
 | Key | Action |
 |-----|--------|
-| `Alt+1`..`Alt+0` | Jump to window 1-10 |
-| `Alt+[` / `Alt+]` | Previous / next window |
-| `Alt+N` | New window |
-| `Alt+H/J/K/L` | Navigate panes (vi-style) |
-| `Alt+arrows` | Navigate panes |
-| `Alt+F` | Floating popup shell (tmux 3.3+) |
-| `Prefix+\|` | Split pane horizontally |
-| `Prefix+-` | Split pane vertically |
-| `Prefix+V` | Join next window as side-by-side pane |
-| `Prefix+B` | Break pane into own window |
-| `Prefix+R` | Reload tmux config |
+| `Option+1`..`Option+0` | Jump to window 1-10 |
+| `Option+[` / `Option+]` | Previous / next window |
+| `Option+N` | New window |
+| `Option+H/J/K/L` | Navigate panes (vi-style) |
+| `Option+arrows` | Navigate panes |
+| `Option+F` | Floating popup shell (tmux 3.3+) |
+| `Ctrl+A, d` | Detach from session |
+| `Ctrl+A, \|` | Split pane horizontally |
+| `Ctrl+A, -` | Split pane vertically |
+| `Ctrl+A, V` | Join next window as side-by-side pane |
+| `Ctrl+A, B` | Break pane into own window |
+| `Ctrl+A, R` | Reload tmux config |
 
 ## Notification system
 
@@ -183,17 +183,7 @@ When a background window reaches Stop or Notification:
 
 All markers are automatically cleared when you switch to that window.
 
-Use `tmuxw -a` to list all marked windows at a glance.
-
-## Session cleanup
-
-A cron job runs every 6 hours and removes stale Tmux sessions:
-
-| Session type | Threshold |
-|---|---|
-| `main` | Never cleaned up |
-| `tmp-*` | Killed after 7 days unattached |
-| Other | Killed after 30 days unattached |
+Use `tmuxw -a` to list all windows including parked.
 
 ## Supported distributions
 
@@ -254,7 +244,7 @@ Exit codes: `0` = all clear, `1` = warnings only, `2` = at least one failure.
 
 ### Cross-device session handoff
 
-- `work` uses `tmux attach -d` which detaches other clients automatically
+- `tmuxs` uses `tmux attach -d` which detaches other clients automatically
 - From phone: `tmux new-session -A -s main` does the same
 
 ## Project structure
@@ -274,8 +264,7 @@ server-init/
 ├── scripts/
 │   ├── tmuxs                       ← Tmux session manager
 │   ├── tmuxw                       ← Tmux window manager
-│   ├── claude-cost                 ← Query Claude Code session costs by project
-│   └── cleanup-sessions.sh         ← Stale session cleanup (cron)
+│   └── claude-cost                 ← Query Claude Code session costs by project
 ├── client/
 │   ├── mac-setup.sh                ← Mac client setup (mosh, Ghostty, SSH sockets)
 │   ├── ghostty-config              ← Ghostty terminal config
