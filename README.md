@@ -266,7 +266,8 @@ server-init/
 │   └── hooks/
 │       ├── claude-notify.sh        ← Bell + OSC notification on Stop/Notification
 │       ├── claude-status.sh        ← Hourglass animation on PreToolUse/PostToolUse
-│       └── clear-bell.sh           ← Clear markers on window focus
+│       ├── clear-bell.sh           ← Clear markers on window focus
+│       └── status-line.sh          ← Claude Code status line (git, tokens, cost, system)
 ├── scripts/
 │   ├── tmuxs                       ← Tmux session manager
 │   ├── tmuxw                       ← Tmux window manager

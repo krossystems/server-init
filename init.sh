@@ -405,6 +405,8 @@ step_setup_claude_code() {
     "${user_home}/.claude/hooks/claude-status.sh" "$NEW_USER" 755
   deploy_config "configs/hooks/clear-bell.sh" \
     "${user_home}/.claude/hooks/clear-bell.sh" "$NEW_USER" 755
+  deploy_config "configs/hooks/status-line.sh" \
+    "${user_home}/.claude/hooks/status-line.sh" "$NEW_USER" 755
   log "Deployed Claude Code hook scripts."
 
   # 6d — Deploy Claude Code settings.json (merge hooks if file already exists)
