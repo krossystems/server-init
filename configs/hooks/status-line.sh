@@ -73,7 +73,11 @@ SYS_CACHE="/tmp/.claude-sys-stats-$(id -u)"
 update_sys_cache() {
   local tmp="${SYS_CACHE}.$$"
   local load cpus mu mp
-  read -r load _ < /proc/loadavg 2>/dev/null || load="0"
+  # Use awk for procfs reads — awk uses buffered stdio (single read() syscall),
+  # unlike bash read which reads byte-by-byte and can get corrupted mid-read
+  # when the kernel updates /proc between individual byte reads.
+  load=$(awk '{print $1; exit}' /proc/loadavg 2>/dev/null) || load="0"
+  [[ "$load" =~ ^[0-9]+\.[0-9]+$ ]] || load="0"
   cpus=$(nproc 2>/dev/null || echo 1)
   read -r mu mp <<< "$(awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{
     printf "%.1f %d", (t-a)/1048576, int((t-a)*100/t)
@@ -119,7 +123,7 @@ fi
 
 # 3. Model
 if [[ -n "$model" ]]; then
-  short=$(echo "$model" | sed 's/ (\(.*\) context)//' | sed 's/[()]//g')
+  short=$(echo "$model" | sed 's/Claude //' | sed 's/ (\(.*\) context)//' | sed 's/[()]//g')
   r+="  ${C_MODEL}◆ ${short}${NC}"
 fi
 
@@ -137,7 +141,7 @@ if (( in_tok > 0 )); then
   r+="${NC}"
 fi
 
-# 6. Code lines (+added -removed) — cumulative for entire conversation
+# 6. Code lines (+added -removed)
 if [[ -n "$lines_add" || -n "$lines_rm" ]]; then
   add="${lines_add:-0}"
   rm="${lines_rm:-0}"
@@ -168,19 +172,21 @@ done
 [[ -n "$elapsed" ]] && r+="  ${C_TIME}⏱ $(fmt_duration $elapsed)${NC}"
 
 # 9. Server load
-if [[ -n "$sys_load" && "$sys_load" != "0" ]]; then
+if [[ -n "$sys_load" && "$sys_load" =~ ^[0-9]+\.[0-9]+$ ]]; then
   load_color="$C_LOAD"
   load_int="${sys_load%%.*}"
   (( load_int >= cpu_count )) && load_color="$C_WARN"
-  load_fmt=$(printf "%.1f" "$sys_load" 2>/dev/null || echo "$sys_load")
-  r+="  ${load_color}☰${load_fmt}/${cpu_count}${NC}"
+  load_fmt=$(printf "%.1f" "$sys_load" 2>/dev/null)
+  if [[ "$load_fmt" =~ ^[0-9]+\.[0-9]$ ]]; then
+    r+="  ${load_color}⚙ ${load_fmt}/${cpu_count}${NC}"
+  fi
 fi
 
 # 10. Memory
 if [[ -n "$mem_used" && "$mem_pct" =~ ^[0-9]+$ ]]; then
   mem_color="$C_MEM"
   (( mem_pct >= 80 )) && mem_color="$C_WARN"
-  r+="  ${mem_color}◈ ${mem_used}G/${mem_pct}%${NC}"
+  r+="  ${mem_color}◆ ${mem_used}G/${mem_pct}%${NC}"
 fi
 
 printf '%s\n' "$r"
