@@ -11,10 +11,20 @@
 
 # Parse event type from stdin
 event=""
+tool_name=""
 if ! [ -t 0 ]; then
   input=$(cat)
   if [[ -n "$input" ]] && command -v jq &>/dev/null; then
     event=$(echo "$input" | jq -r '.hook_event_name // empty' 2>/dev/null || true)
+    tool_name=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null || true)
+  fi
+fi
+
+# Detect loop mode: set @claude-loop when /loop skill is invoked
+if [[ "$event" == "PreToolUse" && "$tool_name" == "Skill" ]]; then
+  tool_skill=$(echo "$input" | jq -r '.tool_input.skill // empty' 2>/dev/null || true)
+  if [[ "$tool_skill" == "loop" ]]; then
+    tmux set-option -p @claude-loop 1 2>/dev/null || true
   fi
 fi
 
