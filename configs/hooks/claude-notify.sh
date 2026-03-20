@@ -7,6 +7,7 @@
 #
 # Markers:
 #   🟢 = Stop (task completed, no action needed)
+#   🔄 = Stop during loop (iteration done, loop continues)
 #   🔔 = Notification (needs your input/decision)
 #
 # Reads hook JSON from stdin:
@@ -36,9 +37,18 @@ fi
 [[ -z "$message" ]] && message="Task finished"
 
 # ── Choose marker based on event type ────────────────────────────────────────
-marker="🟢"   # Stop — task completed
 if [[ "$event" == "Notification" ]]; then
   marker="🔔"  # Notification — needs your decision
+elif [[ "$event" == "Stop" ]]; then
+  # Check if this pane is in loop mode (set via: tmux set-option -p @claude-loop 1)
+  loop_mode=$(tmux show-option -pqv @claude-loop 2>/dev/null || true)
+  if [[ "$loop_mode" == "1" ]]; then
+    marker="🔄"  # Loop iteration done, waiting for next run
+  else
+    marker="🟢"  # Task completed
+  fi
+else
+  marker="🟢"
 fi
 
 # ── Identify which window THIS hook is running in ───────────────────────────
@@ -68,6 +78,7 @@ printf '\a'
 # Strip any existing marker first, then add the new one
 clean_name="${my_window_name#🟢}"
 clean_name="${clean_name#🔔}"
+clean_name="${clean_name#🔄}"
 clean_name="${clean_name#⏳}"
 clean_name="${clean_name#⌛}"
 if [[ -n "$clean_name" ]]; then

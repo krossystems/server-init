@@ -36,6 +36,7 @@ clean_name="${window_name#⏳}"
 clean_name="${clean_name#⌛}"
 clean_name="${clean_name#🟢}"
 clean_name="${clean_name#🔔}"
+clean_name="${clean_name#🔄}"
 
 [[ -z "$clean_name" ]] && exit 0
 

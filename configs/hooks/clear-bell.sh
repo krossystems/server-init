@@ -16,6 +16,7 @@ window_name="${2:-}"
 clean_name="$window_name"
 clean_name="${clean_name#🟢}"
 clean_name="${clean_name#🔔}"
+clean_name="${clean_name#🔄}"
 clean_name="${clean_name#⏳}"
 clean_name="${clean_name#⌛}"
 

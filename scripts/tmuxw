@@ -32,7 +32,7 @@ PARK_SESSION="park-${CUR_SESSION}"
 # Strip status markers from window name
 strip_markers() {
   local n="$1"
-  n="${n#⏳}"; n="${n#⌛}"; n="${n#🟢}"; n="${n#🔔}"
+  n="${n#⏳}"; n="${n#⌛}"; n="${n#🟢}"; n="${n#🔔}"; n="${n#🔄}"
   echo "$n"
 }
 
@@ -44,6 +44,7 @@ get_marker() {
     ⌛*) echo "⌛" ;;
     🟢*) echo "🟢" ;;
     🔔*) echo "🔔" ;;
+    🔄*) echo "🔄" ;;
     *)    echo "—"  ;;
   esac
 }
@@ -64,14 +65,14 @@ find_window() {
   # Exact match first (ignoring status markers)
   local match
   match=$(tmux list-windows $target_flag -F '#{window_index}:#{window_name}' 2>/dev/null \
-    | sed 's/[🟢🔔⏳⌛]//' | grep -i "^[0-9]*:${pattern}$" | head -1 | cut -d: -f1)
+    | sed 's/[🟢🔔🔄⏳⌛]//' | grep -i "^[0-9]*:${pattern}$" | head -1 | cut -d: -f1)
   if [[ -n "$match" ]]; then
     echo "$match"
     return
   fi
   # Substring match
   match=$(tmux list-windows $target_flag -F '#{window_index}:#{window_name}' 2>/dev/null \
-    | sed 's/[🟢🔔⏳⌛]//' | grep -i "${pattern}" | head -1 | cut -d: -f1)
+    | sed 's/[🟢🔔🔄⏳⌛]//' | grep -i "${pattern}" | head -1 | cut -d: -f1)
   echo "$match"
 }
 

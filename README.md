@@ -166,6 +166,7 @@ Window names show Claude Code's current state at a glance:
 |---|---|---|
 | Working | ⏳ ↔ ⌛ | Hourglass flips on each tool use (animated) |
 | Stop | 🟢 | Task completed, review when convenient |
+| Loop | 🔄 | Loop iteration done, waiting for next run |
 | Notification | 🔔 | Needs your input/decision |
 
 ```
