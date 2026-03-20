@@ -133,6 +133,8 @@ NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
 | `tmuxw -p auth` | Park "auth" to park-{session} |
 | `tmuxw -p` | Park current window |
 | `tmuxw -u auth` | Unpark "auth" back to current session |
+| `clauded` | Run claude with --dangerously-skip-permissions (supports all args) |
+| `clauded --resume ID` | Resume a session in dangerous mode |
 | `claude-cost` | Session costs for current project directory |
 | `claude-cost ~/proj` | Session costs for a specific directory |
 | `claude-cost --all` | Session costs for all projects |
