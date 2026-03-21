@@ -443,63 +443,133 @@ step_setup_claude_code() {
   deploy_config "scripts/claude-cost" "${user_home}/bin/claude-cost" "$NEW_USER" 755
   log "Deployed ~/bin/tmuxs, ~/bin/tmuxw, ~/bin/claude-cost"
 
-  # 6f — Configure Git identity
-  if [[ -n "$GIT_NAME" ]]; then
-    su - "$NEW_USER" -c "git config --global user.name '$GIT_NAME'"
-    log "Git user.name set to '$GIT_NAME'"
-  else
-    local existing_name
-    existing_name=$(su - "$NEW_USER" -c "git config --global user.name 2>/dev/null" || true)
-    if [[ -z "$existing_name" ]]; then
-      warn "Git user.name not set. Set it later or re-run with --git-name:"
-      warn "  git config --global user.name 'Your Name'"
-    fi
-  fi
-  if [[ -n "$GIT_EMAIL" ]]; then
-    su - "$NEW_USER" -c "git config --global user.email '$GIT_EMAIL'"
-    log "Git user.email set to '$GIT_EMAIL'"
-  else
-    local existing_email
-    existing_email=$(su - "$NEW_USER" -c "git config --global user.email 2>/dev/null" || true)
-    if [[ -z "$existing_email" ]]; then
-      warn "Git user.email not set. Set it later or re-run with --git-email:"
-      warn "  git config --global user.email 'you@example.com'"
-    fi
-  fi
+  # 6f — Configure Git identity (interactive)
+  section "Git & GitHub Setup"
 
-  # 6g — Generate SSH key for GitHub (if none exists)
-  local ssh_key="${user_home}/.ssh/id_ed25519"
-  if [[ ! -f "$ssh_key" ]]; then
-    local key_email="${GIT_EMAIL:-${NEW_USER}@$(hostname)}"
-    su - "$NEW_USER" -c "ssh-keygen -t ed25519 -C '$key_email' -f '$ssh_key' -N ''"
-    log "Generated SSH key: ${ssh_key}"
-    echo
-    echo -e "${CYAN}${BOLD}── Add this public key to GitHub ──────────────────────────────${NC}"
-    echo -e "${YELLOW}$(cat "${ssh_key}.pub")${NC}"
-    echo -e "${CYAN}${BOLD}──────────────────────────────────────────────────────────────${NC}"
-    echo -e "  → ${BOLD}https://github.com/settings/ssh/new${NC}"
-    echo
-  else
-    log "SSH key already exists: ${ssh_key}"
-  fi
-  # Ensure GitHub host key is trusted
-  if ! su - "$NEW_USER" -c "grep -q github.com ~/.ssh/known_hosts 2>/dev/null"; then
-    su - "$NEW_USER" -c "ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null"
-    log "Added github.com to known_hosts"
-  fi
+  local existing_name existing_email
+  existing_name=$(su - "$NEW_USER" -c "git config --global user.name 2>/dev/null" || true)
+  existing_email=$(su - "$NEW_USER" -c "git config --global user.email 2>/dev/null" || true)
 
-  # 6h — Clone shared skills repo
-  local skills_dir="${user_home}/.claude/skills"
-  if [[ ! -d "${skills_dir}/.git" ]]; then
-    if su - "$NEW_USER" -c "ssh -T git@github.com 2>&1 | grep -q 'successfully authenticated'"; then
-      su - "$NEW_USER" -c "git clone git@github.com:krossystems/claude-skills.git '${skills_dir}'"
-      log "Cloned claude-skills repo into ~/.claude/skills"
+  local git_name="${GIT_NAME:-$existing_name}"
+  local git_email="${GIT_EMAIL:-$existing_email}"
+
+  # Interactive prompts (read from /dev/tty so curl|bash works)
+  local input
+  echo -e "${BOLD}Git identity for '${NEW_USER}':${NC}"
+  read -rp "  user.name [${git_name:-}]: " input < /dev/tty
+  git_name="${input:-$git_name}"
+  read -rp "  user.email [${git_email:-}]: " input < /dev/tty
+  git_email="${input:-$git_email}"
+
+  if [[ -n "$git_name" && -n "$git_email" ]]; then
+    echo
+    echo -e "  name:  ${GREEN}${git_name}${NC}"
+    echo -e "  email: ${GREEN}${git_email}${NC}"
+    read -rp "  Apply git config? [Y/n]: " input < /dev/tty
+    if [[ -z "$input" || "$input" =~ ^[Yy] ]]; then
+      su - "$NEW_USER" -c "git config --global user.name '$git_name'"
+      su - "$NEW_USER" -c "git config --global user.email '$git_email'"
+      log "Git identity configured."
     else
-      warn "GitHub SSH not yet authenticated. After adding the SSH key to GitHub, run:"
-      warn "  git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
+      warn "Skipped git config. Set manually later."
     fi
   else
-    log "Skills repo already exists at ~/.claude/skills"
+    warn "Git identity incomplete. Set manually later:"
+    warn "  git config --global user.name 'Your Name'"
+    warn "  git config --global user.email 'you@example.com'"
+  fi
+
+  # 6g — Generate SSH key for GitHub (interactive)
+  local keys_dir="${user_home}/.ssh/keys"
+  local server_alias
+  server_alias=$(hostname -s)
+
+  echo
+  echo -e "${BOLD}SSH key for GitHub:${NC}"
+  echo -e "  Keys are stored in: ${CYAN}~/.ssh/keys/${NC}"
+  echo -e "  Naming convention: ${CYAN}{server}_{target}_ed25519${NC}"
+  echo
+
+  read -rp "  Server alias [${server_alias}]: " input < /dev/tty
+  server_alias="${input:-$server_alias}"
+
+  local key_name="${server_alias}_github_ed25519"
+  read -rp "  Key filename [${key_name}]: " input < /dev/tty
+  key_name="${input:-$key_name}"
+
+  local ssh_key="${keys_dir}/${key_name}"
+
+  if [[ -f "$ssh_key" ]]; then
+    log "SSH key already exists: ${ssh_key}"
+  else
+    echo
+    echo -e "  Will generate: ${GREEN}${ssh_key}${NC}"
+    read -rp "  Generate this key? [Y/n]: " input < /dev/tty
+    if [[ -z "$input" || "$input" =~ ^[Yy] ]]; then
+      install -d -o "$NEW_USER" -g "$NEW_USER" -m 700 "$keys_dir"
+      local key_comment="${git_email:-${NEW_USER}@${server_alias}}"
+      su - "$NEW_USER" -c "ssh-keygen -t ed25519 -C '$key_comment' -f '$ssh_key' -N ''"
+      log "Generated SSH key: ${ssh_key}"
+    else
+      warn "Skipped SSH key generation."
+    fi
+  fi
+
+  # Configure ~/.ssh/config for GitHub
+  local ssh_config="${user_home}/.ssh/config"
+  if [[ -f "$ssh_key" ]]; then
+    if ! su - "$NEW_USER" -c "grep -q 'Host github.com' ~/.ssh/config 2>/dev/null"; then
+      cat >> "$ssh_config" <<EOF
+
+Host github.com
+    IdentityFile ~/.ssh/keys/${key_name}
+    IdentitiesOnly yes
+EOF
+      chown "$NEW_USER:$NEW_USER" "$ssh_config"
+      chmod 600 "$ssh_config"
+      log "Added GitHub entry to ~/.ssh/config"
+    fi
+
+    # Ensure GitHub host key is trusted
+    if ! su - "$NEW_USER" -c "grep -q github.com ~/.ssh/known_hosts 2>/dev/null"; then
+      su - "$NEW_USER" -c "ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null"
+      log "Added github.com to known_hosts"
+    fi
+
+    # Display public key
+    echo
+    echo -e "${CYAN}${BOLD}── Add this public key to GitHub ───────────────────────────────${NC}"
+    echo -e "${YELLOW}$(cat "${ssh_key}.pub")${NC}"
+    echo -e "${CYAN}${BOLD}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}→ https://github.com/settings/ssh/new${NC}"
+    echo
+    read -rp "  Press Enter after adding the key to GitHub (or 's' to skip)... " input < /dev/tty
+
+    if [[ "$input" =~ ^[Ss] ]]; then
+      warn "Skipped GitHub verification. Clone skills repo manually later:"
+      warn "  git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
+    else
+      # 6h — Test GitHub SSH and clone skills repo
+      echo
+      if su - "$NEW_USER" -c "ssh -T git@github.com 2>&1 | grep -q 'successfully authenticated'"; then
+        log "GitHub SSH authentication successful!"
+
+        local skills_dir="${user_home}/.claude/skills"
+        if [[ ! -d "${skills_dir}/.git" ]]; then
+          read -rp "  Clone claude-skills into ~/.claude/skills? [Y/n]: " input < /dev/tty
+          if [[ -z "$input" || "$input" =~ ^[Yy] ]]; then
+            su - "$NEW_USER" -c "git clone git@github.com:krossystems/claude-skills.git '${skills_dir}'"
+            log "Cloned claude-skills repo."
+          fi
+        else
+          log "Skills repo already exists."
+        fi
+      else
+        warn "GitHub SSH authentication failed. Check that the key was added correctly."
+        warn "  Test manually: ssh -T git@github.com"
+        warn "  Then clone:    git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
+      fi
+    fi
   fi
 
   # 6i — Configure shell environment (PATH, locale, and nvm if installed)

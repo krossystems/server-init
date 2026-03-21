@@ -12,7 +12,7 @@ A single-script bootstrap for fresh Linux servers. Run it once as root and get a
  │                 │         │  │ 1:auth │ 2:pay  │ 3:api  │ 4:dash │ ... │
  │                 │         │  │ claude │ claude │ claude │ claude │      │
  └─────────────────┘         │  └────────┴────────┴────────┴────────┘      │
-                             │   Alt+1    Alt+2    Alt+3    Alt+4          │
+                             │  Opt+1    Opt+2    Opt+3    Opt+4           │
  ┌─────────────────┐         │                                              │
  │  iPhone (Blink) │ ──UDP──▸│  (same session — seamless device handoff)   │
  └─────────────────┘         └──────────────────────────────────────────────┘
@@ -44,6 +44,9 @@ When enabled, this step installs for the specified user:
 - **Claude Code hooks** (`~/.claude/hooks/`) for bell + OS notifications
 - **Claude Code settings** (`~/.claude/settings.json`) with Stop/Notification hooks
 - **Helper commands** (`~/bin/tmuxs`, `~/bin/tmuxw`, `~/bin/claude-cost`) for session/window/cost management
+- **Git identity** — interactive prompts for `user.name` and `user.email`
+- **SSH key for GitHub** — generates `ed25519` key in `~/.ssh/keys/` with naming convention `{server}_{target}_ed25519`, configures `~/.ssh/config`
+- **Claude skills repo** — clones shared skills from `krossystems/claude-skills` into `~/.claude/skills`
 
 ## Swap sizing policy
 
@@ -103,15 +106,19 @@ tmux new-session -A -s main
     --no-tmux             Skip mosh + tmux installation
     --no-zellij           (deprecated alias for --no-tmux)
     --claude-code         Deploy Claude Code parallel dev environment
-    --git-name <name>     Git user.name (used with --claude-code)
-    --git-email <email>   Git user.email (used with --claude-code)
+    --git-name <name>     Git user.name default for interactive prompt
+    --git-email <email>   Git user.email default for interactive prompt
 -h, --help                Show help
 ```
 
 Environment variables: `NEW_USER`, `INSTALL_TMUX`, `INSTALL_CLAUDE_CODE`, `GIT_NAME`, `GIT_EMAIL`
 
 ```bash
+# Non-interactive defaults (git name/email will be pre-filled but still confirmed)
 bash init.sh --username alice --claude-code --git-name "Alice" --git-email "alice@example.com"
+
+# Interactive — script will prompt for git identity and SSH key details
+bash init.sh --username alice --claude-code
 ```
 
 ## Daily operations
@@ -183,7 +190,7 @@ Status bar example:
 When a background window reaches Stop or Notification:
 
 1. **Tmux bell** — the window turns yellow in the status bar
-2. **Marker prefix** (🟢 or 🔔) — replaces the hourglass on the window name
+2. **Marker prefix** (🟢, 🔄, or 🔔) — replaces the hourglass on the window name
 3. **OS notification** — sent via OSC passthrough to Ghostty
 
 All markers are automatically cleared when you switch to that window.
