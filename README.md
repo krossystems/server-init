@@ -103,13 +103,15 @@ tmux new-session -A -s main
     --no-tmux             Skip mosh + tmux installation
     --no-zellij           (deprecated alias for --no-tmux)
     --claude-code         Deploy Claude Code parallel dev environment
+    --git-name <name>     Git user.name (used with --claude-code)
+    --git-email <email>   Git user.email (used with --claude-code)
 -h, --help                Show help
 ```
 
-Environment variables: `NEW_USER`, `INSTALL_TMUX`, `INSTALL_CLAUDE_CODE`
+Environment variables: `NEW_USER`, `INSTALL_TMUX`, `INSTALL_CLAUDE_CODE`, `GIT_NAME`, `GIT_EMAIL`
 
 ```bash
-NEW_USER=alice INSTALL_CLAUDE_CODE=true bash init.sh
+bash init.sh --username alice --claude-code --git-name "Alice" --git-email "alice@example.com"
 ```
 
 ## Daily operations

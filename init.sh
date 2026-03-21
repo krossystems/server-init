@@ -27,6 +27,8 @@ export NEEDRESTART_SUSPEND=1    # suppress needrestart prompts entirely
 NEW_USER="${NEW_USER:-krossys}"
 INSTALL_TMUX="${INSTALL_TMUX:-true}"
 INSTALL_CLAUDE_CODE="${INSTALL_CLAUDE_CODE:-false}"
+GIT_NAME="${GIT_NAME:-}"
+GIT_EMAIL="${GIT_EMAIL:-}"
 
 # GitHub raw base URL (used when running via curl | bash without a local clone)
 GITHUB_RAW="https://raw.githubusercontent.com/krossystems/server-init/main"
@@ -63,14 +65,16 @@ ${BOLD}Options:${NC}
       --no-tmux             Skip mosh + tmux installation
       --no-zellij           (deprecated alias for --no-tmux)
       --claude-code         Deploy Claude Code parallel dev environment for the user
+      --git-name <name>     Git user.name (used with --claude-code)
+      --git-email <email>   Git user.email (used with --claude-code)
   -h, --help                Show this help
 
 ${BOLD}Environment variables (alternative to flags):${NC}
-  NEW_USER, INSTALL_TMUX, INSTALL_CLAUDE_CODE
+  NEW_USER, INSTALL_TMUX, INSTALL_CLAUDE_CODE, GIT_NAME, GIT_EMAIL
 
 ${BOLD}Examples:${NC}
   bash init.sh --username john
-  bash init.sh --username john --claude-code
+  bash init.sh --username john --claude-code --git-name "John" --git-email "john@example.com"
 EOF
 }
 
@@ -80,6 +84,8 @@ while [[ $# -gt 0 ]]; do
     -u|--username)  NEW_USER="$2";            shift 2 ;;
     --no-tmux|--no-zellij) INSTALL_TMUX=false; shift  ;;
     --claude-code)  INSTALL_CLAUDE_CODE=true; shift   ;;
+    --git-name)     GIT_NAME="$2";            shift 2 ;;
+    --git-email)    GIT_EMAIL="$2";           shift 2 ;;
     -h|--help)      usage; exit 0 ;;
     *) die "Unknown option: $1. Use --help for usage." ;;
   esac
@@ -437,7 +443,66 @@ step_setup_claude_code() {
   deploy_config "scripts/claude-cost" "${user_home}/bin/claude-cost" "$NEW_USER" 755
   log "Deployed ~/bin/tmuxs, ~/bin/tmuxw, ~/bin/claude-cost"
 
-  # 6f — Configure shell environment (PATH, locale, and nvm if installed)
+  # 6f — Configure Git identity
+  if [[ -n "$GIT_NAME" ]]; then
+    su - "$NEW_USER" -c "git config --global user.name '$GIT_NAME'"
+    log "Git user.name set to '$GIT_NAME'"
+  else
+    local existing_name
+    existing_name=$(su - "$NEW_USER" -c "git config --global user.name 2>/dev/null" || true)
+    if [[ -z "$existing_name" ]]; then
+      warn "Git user.name not set. Set it later or re-run with --git-name:"
+      warn "  git config --global user.name 'Your Name'"
+    fi
+  fi
+  if [[ -n "$GIT_EMAIL" ]]; then
+    su - "$NEW_USER" -c "git config --global user.email '$GIT_EMAIL'"
+    log "Git user.email set to '$GIT_EMAIL'"
+  else
+    local existing_email
+    existing_email=$(su - "$NEW_USER" -c "git config --global user.email 2>/dev/null" || true)
+    if [[ -z "$existing_email" ]]; then
+      warn "Git user.email not set. Set it later or re-run with --git-email:"
+      warn "  git config --global user.email 'you@example.com'"
+    fi
+  fi
+
+  # 6g — Generate SSH key for GitHub (if none exists)
+  local ssh_key="${user_home}/.ssh/id_ed25519"
+  if [[ ! -f "$ssh_key" ]]; then
+    local key_email="${GIT_EMAIL:-${NEW_USER}@$(hostname)}"
+    su - "$NEW_USER" -c "ssh-keygen -t ed25519 -C '$key_email' -f '$ssh_key' -N ''"
+    log "Generated SSH key: ${ssh_key}"
+    echo
+    echo -e "${CYAN}${BOLD}── Add this public key to GitHub ──────────────────────────────${NC}"
+    echo -e "${YELLOW}$(cat "${ssh_key}.pub")${NC}"
+    echo -e "${CYAN}${BOLD}──────────────────────────────────────────────────────────────${NC}"
+    echo -e "  → ${BOLD}https://github.com/settings/ssh/new${NC}"
+    echo
+  else
+    log "SSH key already exists: ${ssh_key}"
+  fi
+  # Ensure GitHub host key is trusted
+  if ! su - "$NEW_USER" -c "grep -q github.com ~/.ssh/known_hosts 2>/dev/null"; then
+    su - "$NEW_USER" -c "ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null"
+    log "Added github.com to known_hosts"
+  fi
+
+  # 6h — Clone shared skills repo
+  local skills_dir="${user_home}/.claude/skills"
+  if [[ ! -d "${skills_dir}/.git" ]]; then
+    if su - "$NEW_USER" -c "ssh -T git@github.com 2>&1 | grep -q 'successfully authenticated'"; then
+      su - "$NEW_USER" -c "git clone git@github.com:krossystems/claude-skills.git '${skills_dir}'"
+      log "Cloned claude-skills repo into ~/.claude/skills"
+    else
+      warn "GitHub SSH not yet authenticated. After adding the SSH key to GitHub, run:"
+      warn "  git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
+    fi
+  else
+    log "Skills repo already exists at ~/.claude/skills"
+  fi
+
+  # 6i — Configure shell environment (PATH, locale, and nvm if installed)
   local profile="${user_home}/.bashrc"
   local marker="# --- server-init: claude-code environment ---"
   if ! grep -qF "$marker" "$profile" 2>/dev/null; then
