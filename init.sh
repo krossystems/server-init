@@ -369,6 +369,17 @@ step_install_tmux_mosh() {
   log "mosh $(mosh --version 2>&1 | head -1 || echo '?'), tmux $(tmux -V 2>/dev/null || echo '?'), jq installed."
 }
 
+# Run a command as $NEW_USER with nvm loaded.
+# Ubuntu's default .bashrc exits early in non-interactive shells (case $- guard),
+# so nvm sourcing appended to .bashrc never runs under 'su -c'. Load explicitly.
+run_as_user() {
+  su - "$NEW_USER" -c "
+    export NVM_DIR=\"\$HOME/.nvm\"
+    [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+    $1
+  "
+}
+
 # ── Step 6: Deploy Claude Code parallel dev environment ──────────────────────
 step_setup_claude_code() {
   section "Setting up Claude Code parallel dev environment for $NEW_USER"
@@ -376,11 +387,11 @@ step_setup_claude_code() {
   local user_home="/home/${NEW_USER}"
 
   # 6a — Ensure Node.js and Claude Code are available
-  if su - "$NEW_USER" -c 'command -v claude' &>/dev/null; then
+  if run_as_user 'command -v claude' &>/dev/null; then
     log "Claude Code already installed."
   else
     # Need Node.js first — prefer system node, fall back to nvm
-    if ! su - "$NEW_USER" -c 'command -v node' &>/dev/null; then
+    if ! run_as_user 'command -v node' &>/dev/null; then
       log "Node.js not found — installing via nvm..."
       su - "$NEW_USER" -c 'bash -c "
         export NVM_DIR=\"\$HOME/.nvm\"
@@ -392,11 +403,11 @@ step_setup_claude_code() {
       "'
       log "Node.js installed via nvm."
     else
-      log "Node.js already available: $(su - "$NEW_USER" -c 'node --version' 2>/dev/null)"
+      log "Node.js already available: $(run_as_user 'node --version' 2>/dev/null)"
     fi
 
     log "Installing Claude Code..."
-    su - "$NEW_USER" -c 'npm install -g @anthropic-ai/claude-code'
+    run_as_user 'npm install -g @anthropic-ai/claude-code'
     log "Claude Code installed."
   fi
 
@@ -443,8 +454,8 @@ step_setup_claude_code() {
   if [[ ! -d "$pw_dir" ]]; then
     log "Installing Playwright MCP..."
     install -d -o "$NEW_USER" -g "$NEW_USER" "$pw_dir"
-    su - "$NEW_USER" -c "cd '$pw_dir' && npm init -y --silent && npm install @playwright/mcp --silent"
-    su - "$NEW_USER" -c "cd '$pw_dir' && npx playwright install --with-deps chromium"
+    run_as_user "cd '$pw_dir' && npm init -y --silent && npm install @playwright/mcp --silent"
+    run_as_user "cd '$pw_dir' && npx playwright install --with-deps chromium"
     log "Playwright MCP and Chromium installed."
   else
     log "Playwright MCP already installed at $pw_dir"
