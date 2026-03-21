@@ -602,8 +602,7 @@ MCPEOF
     read -rp "  Generate this key? [Y/n]: " input < /dev/tty
     if [[ -z "$input" || "$input" =~ ^[Yy] ]]; then
       install -d -o "$NEW_USER" -g "$NEW_USER" -m 700 "$keys_dir"
-      local key_comment="${git_email:-${NEW_USER}@${server_alias}}"
-      su - "$NEW_USER" -c "ssh-keygen -t ed25519 -C '$key_comment' -f '$ssh_key' -N ''"
+      su - "$NEW_USER" -c "ssh-keygen -t ed25519 -C '$key_name' -f '$ssh_key' -N ''"
       log "Generated SSH key: ${ssh_key}"
     else
       warn "Skipped SSH key generation."
