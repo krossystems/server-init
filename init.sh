@@ -370,14 +370,10 @@ step_install_tmux_mosh() {
 }
 
 # Run a command as $NEW_USER with nvm loaded.
-# Ubuntu's default .bashrc exits early in non-interactive shells (case $- guard),
-# so nvm sourcing appended to .bashrc never runs under 'su -c'. Load explicitly.
+# Ubuntu's .bashrc has a non-interactive guard that skips nvm sourcing under su -c.
+# Single-line form avoids any multi-line quoting issues with su -c.
 run_as_user() {
-  su - "$NEW_USER" -c "
-    export NVM_DIR=\"\$HOME/.nvm\"
-    [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
-    $1
-  "
+  su - "$NEW_USER" -c ". \$HOME/.nvm/nvm.sh 2>/dev/null; $1"
 }
 
 # ── Step 6: Deploy Claude Code parallel dev environment ──────────────────────
