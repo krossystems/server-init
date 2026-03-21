@@ -436,14 +436,88 @@ step_setup_claude_code() {
     log "Deployed ~/.claude/settings.json"
   fi
 
-  # 6e — Deploy helper scripts (tmuxs, tmuxw)
+  # 6e — Playwright MCP with shared headless Chromium (CDP mode)
+  # All Claude Code sessions share one persistent browser via --cdp-endpoint,
+  # avoiding SingletonLock conflicts. Browser profile is persisted for GitHub auth etc.
+  local pw_dir="${user_home}/.local/share/playwright-mcp"
+  if [[ ! -d "$pw_dir" ]]; then
+    log "Installing Playwright MCP..."
+    install -d -o "$NEW_USER" -g "$NEW_USER" "$pw_dir"
+    su - "$NEW_USER" -c "cd '$pw_dir' && npm init -y --silent && npm install @playwright/mcp --silent"
+    su - "$NEW_USER" -c "cd '$pw_dir' && npx playwright install --with-deps chromium"
+    log "Playwright MCP and Chromium installed."
+  else
+    log "Playwright MCP already installed at $pw_dir"
+  fi
+
+  # Find installed chromium binary (version-independent)
+  local chrome_bin
+  chrome_bin=$(su - "$NEW_USER" -c "ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -1" || true)
+  if [[ -n "$chrome_bin" ]]; then
+    # Deploy systemd user service for headless Chromium
+    local systemd_dir="${user_home}/.config/systemd/user"
+    install -d -o "$NEW_USER" -g "$NEW_USER" "$systemd_dir"
+    cat > "${systemd_dir}/chromium-cdp.service" <<SVCEOF
+[Unit]
+Description=Headless Chromium with CDP for Playwright MCP
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=${chrome_bin} \\
+  --remote-debugging-port=9222 \\
+  --user-data-dir=%h/.cache/playwright-github-profile \\
+  --no-first-run \\
+  --no-default-browser-check \\
+  --no-sandbox \\
+  --headless=new
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+SVCEOF
+    chown "$NEW_USER:$NEW_USER" "${systemd_dir}/chromium-cdp.service"
+
+    # Enable lingering so user services start at boot (not just on login)
+    loginctl enable-linger "$NEW_USER" 2>/dev/null || true
+
+    # Enable and start the service
+    su - "$NEW_USER" -c "systemctl --user daemon-reload && systemctl --user enable --now chromium-cdp.service"
+    log "Chromium CDP service enabled (port 9222, persistent profile)."
+
+    # Deploy .mcp.json with CDP endpoint
+    local mcp_dest="${user_home}/.claude/.mcp.json"
+    local mcp_cli="${pw_dir}/node_modules/@playwright/mcp/cli.js"
+    cat > "$mcp_dest" <<MCPEOF
+{
+  "mcpServers": {
+    "github-browser": {
+      "command": "node",
+      "args": [
+        "${mcp_cli}",
+        "--cdp-endpoint",
+        "http://127.0.0.1:9222"
+      ]
+    }
+  }
+}
+MCPEOF
+    chown "$NEW_USER:$NEW_USER" "$mcp_dest"
+    log "Deployed ~/.claude/.mcp.json (CDP mode → localhost:9222)"
+  else
+    warn "Chromium binary not found. Playwright MCP installed but CDP service not created."
+    warn "  Try: npx playwright install chromium"
+  fi
+
+  # 6f — Deploy helper scripts
   install -d -o "$NEW_USER" -g "$NEW_USER" "${user_home}/bin"
   deploy_config "scripts/tmuxs"      "${user_home}/bin/tmuxs"      "$NEW_USER" 755
   deploy_config "scripts/tmuxw"      "${user_home}/bin/tmuxw"      "$NEW_USER" 755
   deploy_config "scripts/claude-cost" "${user_home}/bin/claude-cost" "$NEW_USER" 755
   log "Deployed ~/bin/tmuxs, ~/bin/tmuxw, ~/bin/claude-cost"
 
-  # 6f — Configure Git identity (interactive)
+  # 6g — Configure Git identity (interactive)
   section "Git & GitHub Setup"
 
   local existing_name existing_email
@@ -479,7 +553,7 @@ step_setup_claude_code() {
     warn "  git config --global user.email 'you@example.com'"
   fi
 
-  # 6g — Generate SSH key for GitHub (interactive)
+  # 6h — Generate SSH key for GitHub (interactive)
   local keys_dir="${user_home}/.ssh/keys"
   local server_alias
   server_alias=$(hostname -s)
@@ -549,7 +623,7 @@ EOF
       warn "Skipped GitHub verification. Clone skills repo manually later:"
       warn "  git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
     else
-      # 6h — Test GitHub SSH and clone skills repo
+      # 6i — Test GitHub SSH and clone skills repo
       echo
       if su - "$NEW_USER" -c "ssh -T git@github.com 2>&1 | grep -q 'successfully authenticated'"; then
         log "GitHub SSH authentication successful!"
@@ -572,7 +646,7 @@ EOF
     fi
   fi
 
-  # 6i — Configure shell environment (PATH, locale, and nvm if installed)
+  # 6j — Configure shell environment (PATH, locale, and nvm if installed)
   local profile="${user_home}/.bashrc"
   local marker="# --- server-init: claude-code environment ---"
   if ! grep -qF "$marker" "$profile" 2>/dev/null; then

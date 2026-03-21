@@ -45,6 +45,7 @@ When enabled, this step installs for the specified user:
 - **Claude Code settings** (`~/.claude/settings.json`) with Stop/Notification hooks
 - **Helper commands** (`~/bin/tmuxs`, `~/bin/tmuxw`, `~/bin/claude-cost`) for session/window/cost management
 - **Git identity** — interactive prompts for `user.name` and `user.email`
+- **Playwright MCP** — installs `@playwright/mcp` and headless Chromium, creates `chromium-cdp.service` (systemd user service, port 9222) with persistent browser profile for GitHub auth; all Claude Code sessions share one browser via `--cdp-endpoint`, avoiding SingletonLock conflicts
 - **SSH key for GitHub** — generates `ed25519` key in `~/.ssh/keys/` with naming convention `{server}_{target}_ed25519`, configures `~/.ssh/config`
 - **Claude skills repo** — clones shared skills from `krossystems/claude-skills` into `~/.claude/skills`
 
