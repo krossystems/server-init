@@ -65,8 +65,8 @@ ${BOLD}Options:${NC}
       --no-tmux             Skip mosh + tmux installation
       --no-zellij           (deprecated alias for --no-tmux)
       --claude-code         Deploy Claude Code parallel dev environment for the user
-      --git-name <name>     Git user.name (used with --claude-code)
-      --git-email <email>   Git user.email (used with --claude-code)
+      --git-name <name>     Git user.name default for interactive prompt
+      --git-email <email>   Git user.email default for interactive prompt
   -h, --help                Show this help
 
 ${BOLD}Environment variables (alternative to flags):${NC}
@@ -663,7 +663,7 @@ EOF
   log "Swap configured: ${swap_gb} GB at $swapfile (swappiness=10)."
 }
 
-# ── Step 7: Harden SSH ────────────────────────────────────────────────────────
+# ── Step 8: Harden SSH ────────────────────────────────────────────────────────
 step_harden_ssh() {
   section "Hardening SSH configuration"
 
@@ -739,7 +739,7 @@ step_harden_ssh() {
   fi
 }
 
-# ── Step 8: Install and configure fail2ban ────────────────────────────────────
+# ── Step 9: Install and configure fail2ban ────────────────────────────────────
 step_setup_fail2ban() {
   section "Installing and configuring fail2ban"
 
@@ -770,7 +770,7 @@ EOF
   log "fail2ban configured (SSH: max 3 retries → 24h ban)."
 }
 
-# ── Step 9: Automatic security updates ───────────────────────────────────────
+# ── Step 10: Automatic security updates ──────────────────────────────────────
 step_auto_updates() {
   section "Configuring automatic security updates"
 
@@ -819,7 +819,7 @@ EOF
   esac
 }
 
-# ── Step 10: Final summary ────────────────────────────────────────────────────
+# ── Final summary ────────────────────────────────────────────────────────────
 print_summary() {
   echo
   echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
