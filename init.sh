@@ -489,9 +489,23 @@ SVCEOF
     # Enable lingering so user services start at boot (not just on login)
     loginctl enable-linger "$NEW_USER" 2>/dev/null || true
 
-    # Enable and start the service
-    su - "$NEW_USER" -c "systemctl --user daemon-reload && systemctl --user enable --now chromium-cdp.service"
-    log "Chromium CDP service enabled (port 9222, persistent profile)."
+    # Enable the service via symlink (systemctl --user needs D-Bus session
+    # which isn't available under su from root during initial setup)
+    local wants_dir="${user_home}/.config/systemd/user/default.target.wants"
+    install -d -o "$NEW_USER" -g "$NEW_USER" "$wants_dir"
+    ln -sf ../chromium-cdp.service "${wants_dir}/chromium-cdp.service"
+    chown -h "$NEW_USER:$NEW_USER" "${wants_dir}/chromium-cdp.service"
+
+    # Try to start now if user session is active, otherwise it starts on first login
+    local uid
+    uid=$(id -u "$NEW_USER")
+    if [[ -d "/run/user/$uid" ]]; then
+      su - "$NEW_USER" -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload && XDG_RUNTIME_DIR=/run/user/$uid systemctl --user start chromium-cdp.service" 2>/dev/null \
+        && log "Chromium CDP service started (port 9222, persistent profile)." \
+        || log "Chromium CDP service enabled — will start on first login."
+    else
+      log "Chromium CDP service enabled — will start on first login (or reboot)."
+    fi
 
     # Deploy .mcp.json with CDP endpoint
     local mcp_dest="${user_home}/.claude/.mcp.json"
