@@ -407,11 +407,42 @@ step_setup_claude_code() {
     log "Claude Code installed."
   fi
 
-  # 6b — Deploy tmux.conf
+  # 6b — Install Claude Code plugins and plugin dependencies
+  log "Installing plugin dependencies..."
+  # nvm npm can install -g as user; system npm needs root
+  if [[ -f "${user_home}/.nvm/nvm.sh" ]]; then
+    run_as_user 'npm install -g typescript-language-server typescript firecrawl-cli'
+  else
+    npm install -g typescript-language-server typescript firecrawl-cli
+  fi
+
+  log "Installing Claude Code plugins..."
+  run_as_user 'claude plugin marketplace add thedotmack/claude-mem --scope user 2>/dev/null || true'
+  local plugins=(
+    superpowers@claude-plugins-official
+    context7@claude-plugins-official
+    frontend-design@claude-plugins-official
+    firecrawl@claude-plugins-official
+    ralph-loop@claude-plugins-official
+    claude-mem@thedotmack
+    code-review@claude-plugins-official
+    code-simplifier@claude-plugins-official
+    feature-dev@claude-plugins-official
+    typescript-lsp@claude-plugins-official
+    claude-md-management@claude-plugins-official
+    security-guidance@claude-plugins-official
+    skill-creator@claude-plugins-official
+  )
+  for plugin in "${plugins[@]}"; do
+    run_as_user "claude plugin install $plugin --scope user 2>/dev/null || true"
+  done
+  log "Claude Code plugins installed (${#plugins[@]} plugins)."
+
+  # 6c — Deploy tmux.conf
   deploy_config "configs/tmux.conf" "${user_home}/.tmux.conf" "$NEW_USER" 644
   log "Deployed ~/.tmux.conf"
 
-  # 6c — Deploy Claude Code hooks
+  # 6d — Deploy Claude Code hooks
   deploy_config "configs/hooks/claude-notify.sh" \
     "${user_home}/.claude/hooks/claude-notify.sh" "$NEW_USER" 755
   deploy_config "configs/hooks/claude-status.sh" \
@@ -422,7 +453,7 @@ step_setup_claude_code() {
     "${user_home}/.claude/hooks/status-line.sh" "$NEW_USER" 755
   log "Deployed Claude Code hook scripts."
 
-  # 6d — Deploy Claude Code settings.json (merge hooks if file already exists)
+  # 6e — Deploy Claude Code settings.json (merge hooks if file already exists)
   local settings_dest="${user_home}/.claude/settings.json"
   install -d -o "$NEW_USER" -g "$NEW_USER" "$(dirname "$settings_dest")"
   if [[ -f "$settings_dest" ]]; then
@@ -443,7 +474,7 @@ step_setup_claude_code() {
     log "Deployed ~/.claude/settings.json"
   fi
 
-  # 6e — Playwright MCP with shared headless Chromium (CDP mode)
+  # 6f — Playwright MCP with shared headless Chromium (CDP mode)
   # All Claude Code sessions share one persistent browser via --cdp-endpoint,
   # avoiding SingletonLock conflicts. Browser profile is persisted for GitHub auth etc.
   local pw_dir="${user_home}/.local/share/playwright-mcp"
@@ -531,14 +562,14 @@ MCPEOF
     warn "  Try: npx playwright install chromium"
   fi
 
-  # 6f — Deploy helper scripts
+  # 6g — Deploy helper scripts
   install -d -o "$NEW_USER" -g "$NEW_USER" "${user_home}/bin"
   deploy_config "scripts/tmuxs"      "${user_home}/bin/tmuxs"      "$NEW_USER" 755
   deploy_config "scripts/tmuxw"      "${user_home}/bin/tmuxw"      "$NEW_USER" 755
   deploy_config "scripts/claude-cost" "${user_home}/bin/claude-cost" "$NEW_USER" 755
   log "Deployed ~/bin/tmuxs, ~/bin/tmuxw, ~/bin/claude-cost"
 
-  # 6g — Configure Git identity (interactive)
+  # 6h — Configure Git identity (interactive)
   section "Git & GitHub Setup"
 
   local existing_name existing_email
@@ -574,7 +605,7 @@ MCPEOF
     warn "  git config --global user.email 'you@example.com'"
   fi
 
-  # 6h — Generate SSH key for GitHub (interactive)
+  # 6i — Generate SSH key for GitHub (interactive)
   local keys_dir="${user_home}/.ssh/keys"
   local server_alias
   server_alias=$(hostname -s)
@@ -643,7 +674,7 @@ EOF
       warn "Skipped GitHub verification. Clone skills repo manually later:"
       warn "  git clone git@github.com:krossystems/claude-skills.git ~/.claude/skills"
     else
-      # 6i — Test GitHub SSH and clone skills repo
+      # 6j — Test GitHub SSH and clone skills repo
       echo
       if su - "$NEW_USER" -c "ssh -T git@github.com 2>&1 | grep -q 'successfully authenticated'"; then
         log "GitHub SSH authentication successful!"
@@ -666,7 +697,7 @@ EOF
     fi
   fi
 
-  # 6j — Configure shell environment (PATH, locale, and nvm if installed)
+  # 6k — Configure shell environment (PATH, locale, and nvm if installed)
   local profile="${user_home}/.bashrc"
   local marker="# --- server-init: claude-code environment ---"
   if ! grep -qF "$marker" "$profile" 2>/dev/null; then
